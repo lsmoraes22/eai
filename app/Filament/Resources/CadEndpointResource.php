@@ -1,0 +1,205 @@
+<?php
+
+namespace App\Filament\Resources;
+
+use App\Models\CadEndpoint;
+use App\Models\Client;
+use App\Models\CadProcesso;
+use Filament\Forms;
+use Filament\Forms\Form;
+use Filament\Forms\Components\Section;
+use Filament\Forms\Components\TextInput;
+use Filament\Forms\Components\Textarea;
+use Filament\Forms\Components\Toggle;
+use Filament\Forms\Components\Select;
+use Filament\Tables;
+use Filament\Tables\Table;
+use Filament\Resources\Resource;
+use App\Filament\Resources\CadEndpointResource\Pages;
+
+class CadEndpointResource extends Resource
+{
+    protected static ?string $model = CadEndpoint::class;
+
+    protected static ?string $navigationIcon = 'heroicon-o-rectangle-stack';
+    protected static ?string $navigationGroup = 'Cadastros';
+
+    public static function form(Form $form): Form
+    {
+        return $form
+            ->schema([
+                Section::make('Informações da Interface')
+                    ->description('Dados principais do endpoint.')
+                    ->schema([
+
+                Select::make('nome')
+                    ->label('Nome')
+                    ->required()
+                    ->options(CadProcesso::pluck('name', 'id'))
+                    ->searchable()
+                    ->preload(),
+			Select::make('direcao')
+			    ->label('Direção')
+			    ->searchable()
+			    ->required()
+			    ->options([
+				'entrada' => 'entrada',
+				'saida' => 'saida'
+			    ]),
+                        Select::make('tipo')
+                            ->label('Tipo de Integração')
+                            ->options([
+                                'REST' => 'REST',
+                                'SOAP' => 'SOAP',
+                                'IDOC' => 'IDOC',
+                            ])
+                            ->default('REST')
+                            ->required(),
+
+                        Select::make('metodo')
+                            ->label('Método HTTP')
+                            ->options([
+                                'GET' => 'GET',
+                                'POST' => 'POST',
+                                'PUT' => 'PUT',
+                            ])
+                            ->default('POST')
+                            ->required(),
+			Select::make('client_id')
+	                    ->label('Cliente')
+	                    ->options(Client::all()->pluck('name', 'id')) // lista todos os clientes
+	                    ->searchable() // permite pesquisar
+	                    ->required(),
+                        Textarea::make('url')
+                            ->label('URL')
+                            ->rows(2)
+                            ->required(),
+                        Select::make('extensao')
+                            ->label('Extensão')
+                            ->options([
+                                'XML' => 'XML',
+                                'JSON' => 'JSON',
+                                'TXT' => 'TXT',
+				'CSV' => 'CSV'
+                            ])
+                            ->default('XML')
+                            ->required(),
+			Toggle::make('namespace'),
+                    ])
+                    ->columns(2),
+
+                Section::make('Headers da Requisição')
+                    ->description('Headers HTTP adicionais (JSON).')
+                    ->schema([
+                        Forms\Components\KeyValue::make('headers')
+                            ->label('Headers (JSON)')
+                            ->addButtonLabel('Adicionar Header')
+                            ->keyLabel('Header')
+                            ->valueLabel('Valor')
+                            ->columnSpanFull()
+                            ->nullable(),
+                    ]),
+
+                Section::make('Autenticação')
+                    ->description('Configurações de autenticação.')
+                    ->schema([
+                        Select::make('autenticacao')
+                            ->label('Tipo de Autenticação')
+                            ->options([
+                                'nenhum' => 'Nenhum',
+                                'basic'  => 'Basic Auth',
+                                'bearer' => 'Bearer Token',
+                                'api_key' => 'API Key',
+                            ])
+                            ->default('nenhum'),
+
+                        TextInput::make('auth_user')
+                            ->label('Usuário (Basic)')
+                            ->maxLength(100)
+                            ->visible(fn ($get) => $get('autenticacao') === 'basic'),
+
+                        TextInput::make('auth_pass')
+                            ->label('Senha (Basic)')
+                            ->password()
+                            ->maxLength(255)
+                            ->visible(fn ($get) => $get('autenticacao') === 'basic'),
+
+                        Textarea::make('auth_token')
+                            ->label('Token (Bearer / API Key)')
+                            ->rows(2)
+                            ->visible(fn ($get) =>
+                                in_array($get('autenticacao'), ['bearer', 'api_key'])
+                            ),
+                    ])
+                    ->columns(2),
+
+                Section::make('Configurações Avançadas')
+                    ->schema([
+                        Toggle::make('ativo')
+                            ->label('Ativo?')
+                            ->default(true),
+
+                        TextInput::make('timeout')
+                            ->label('Timeout (s)')
+                            ->numeric()
+                            ->default(30),
+
+                        TextInput::make('tentativas')
+                            ->label('Tentativas Máximas')
+                            ->numeric()
+                            ->default(3),
+
+                        TextInput::make('descricao')
+                            ->label('Descrição')
+                            ->maxLength(255)
+                            ->columnSpanFull(),
+                    ])
+                    ->columns(2),
+            ]);
+    }
+
+    public static function table(Table $table): Table
+    {
+        return $table
+            ->columns([
+                Tables\Columns\TextColumn::make('nome')->searchable(),
+                Tables\Columns\TextColumn::make('tipo'),
+                Tables\Columns\TextColumn::make('metodo'),
+		Tables\Columns\TextColumn::make('direcao')->label('Direção')->searchable(),
+                Tables\Columns\TextColumn::make('extensao')->label('Extensão')->searchable(),
+                Tables\Columns\TextColumn::make('autenticacao')->toggleable(isToggledHiddenByDefault: true),
+		Tables\Columns\TextColumn::make('client_id')->label('Cliente')->sortable()->searchable(),
+                Tables\Columns\TextColumn::make('url')->searchable()->toggleable(isToggledHiddenByDefault: true),
+                Tables\Columns\TextColumn::make('auth_user')->searchable()->toggleable(isToggledHiddenByDefault: true),
+                Tables\Columns\TextColumn::make('auth_pass')->searchable()->toggleable(isToggledHiddenByDefault: true),
+                Tables\Columns\IconColumn::make('ativo')->boolean()->toggleable(isToggledHiddenByDefault: true),
+                Tables\Columns\TextColumn::make('timeout')->numeric()->sortable()->toggleable(isToggledHiddenByDefault: true),
+                Tables\Columns\TextColumn::make('tentativas')->numeric()->sortable()->toggleable(isToggledHiddenByDefault: true),
+                Tables\Columns\TextColumn::make('descricao')->searchable()->toggleable(isToggledHiddenByDefault: true),
+                Tables\Columns\TextColumn::make('created_at')->dateTime()->sortable()->toggleable(isToggledHiddenByDefault: true),
+                Tables\Columns\TextColumn::make('updated_at')->dateTime()->sortable()->toggleable(isToggledHiddenByDefault: true),
+            ])
+            ->actions([
+                Tables\Actions\EditAction::make(),
+            ])
+            ->bulkActions([
+                Tables\Actions\BulkActionGroup::make([
+                    Tables\Actions\DeleteBulkAction::make(),
+                ]),
+            ]);
+    }
+
+    public static function getRelations(): array
+    {
+        return [];
+    }
+
+    public static function getPages(): array
+    {
+        return [
+            'index'  => Pages\ListCadEndpoints::route('/'),
+            'create' => Pages\CreateCadEndpoint::route('/create'),
+            'edit'   => Pages\EditCadEndpoint::route('/{record}/edit'),
+        ];
+    }
+}
