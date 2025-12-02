@@ -35,7 +35,7 @@ class CadEndpointResource extends Resource
                 Select::make('nome')
                     ->label('Nome')
                     ->required()
-                    ->options(CadProcesso::pluck('name', 'id'))
+                    ->options(CadProcesso::pluck('name', 'name'))
                     ->searchable()
                     ->preload(),
 			Select::make('direcao')
@@ -62,6 +62,7 @@ class CadEndpointResource extends Resource
                                 'GET' => 'GET',
                                 'POST' => 'POST',
                                 'PUT' => 'PUT',
+				'PATCH' => 'PATCH'
                             ])
                             ->default('POST')
                             ->required(),
@@ -112,7 +113,6 @@ class CadEndpointResource extends Resource
                                 'api_key' => 'API Key',
                             ])
                             ->default('nenhum'),
-
                         TextInput::make('auth_user')
                             ->label('Usuário (Basic)')
                             ->maxLength(100)
@@ -153,6 +153,12 @@ class CadEndpointResource extends Resource
                             ->label('Descrição')
                             ->maxLength(255)
                             ->columnSpanFull(),
+
+                        TextInput::make('payload')
+                            ->label('Payload')
+                            ->maxLength(255)
+                            ->columnSpanFull(),
+
                     ])
                     ->columns(2),
             ]);

@@ -4,7 +4,7 @@ namespace App\Filament\Pages;
 
 use Filament\Pages\Page;
 use Illuminate\Support\Facades\Storage;
-
+use App\Models\CadInterfaceStatus;
 class FileExplorer extends Page
 {
     protected static ?string $navigationIcon = 'heroicon-o-folder-open';
@@ -50,6 +50,7 @@ class FileExplorer extends Page
     	if (Storage::disk('public')->exists("{$this->currentPath}/{$file}")) {
             Storage::disk('public')->delete("{$this->currentPath}/{$file}");
             $this->dispatch('notify', message: 'Arquivo deletado com sucesso!');
+	    CadInterfaceStatus::where('int_arquivo',$file)->update(['int_status' => 4]);
         }
     }
 

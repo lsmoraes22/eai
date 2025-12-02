@@ -47,12 +47,10 @@ class CadInterfaceStatusResource extends Resource
                     ->label('IDoc')
 		    ->searchable(),
 
-
                 Tables\Columns\TextColumn::make('int_arquivo')
                     ->label('Arquivo')
                     ->searchable()
 		    ->toggleable(isToggledHiddenByDefault: true),
-
 
                 Tables\Columns\TextColumn::make('int_status')
                     ->label('Status')
@@ -62,7 +60,7 @@ class CadInterfaceStatusResource extends Resource
                         'success' => fn($state) => $state == 1,
                         'danger' => fn($state) => $state == 2,
 			'info' => fn($state) => $state == 3,
-			'secondary' => fn($state) => $state >3
+			'warning' => fn($state) => $state == 4
 		    ])
 		    ->formatStateUsing(function ($state) {
                         return match ($state) {
@@ -70,6 +68,7 @@ class CadInterfaceStatusResource extends Resource
                             1 => 'Validado',
                             2 => 'Recusado',
 			    3 => 'Processado',
+			    4 => 'Excluído',
                             default => 'Desconhecido',
                         };
                     })
