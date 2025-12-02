@@ -4,7 +4,7 @@ namespace App\Services;
 
 use Illuminate\Support\Facades\Storage;
 
-class ClientStorageService
+class ClientStorageServices
 {
     private string $base = 'public/clients';
 
