@@ -11,7 +11,7 @@ class CadEndpoint extends Model
     protected $fillable = [
         'nome', 'tipo', 'metodo', 'client_id', 'url', 'extensao', 'namespace',
 	'headers', 'autenticacao', 'auth_user', 'direcao',
-	'auth_pass', 'auth_token', 'ativo', 'timeout', 'tentativas', 'descricao'
+	'auth_pass', 'auth_token', 'ativo', 'timeout', 'tentativas', 'descricao', 'payload'
     ];
 
     protected $casts = [

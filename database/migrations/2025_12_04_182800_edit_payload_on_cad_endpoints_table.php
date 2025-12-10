@@ -11,12 +11,9 @@ return new class extends Migration
      */
     public function up(): void
     {
-        Schema::table('cad_endpoints', function (Blueprint $table) {
-            $table->foreignId('client_id')
-            	->after('id')
-            	->constrained('clients')
-            	->cascadeOnDelete();
-        });
+	Schema::table('cad_endpoints', function (Blueprint $table) {
+	    $table->string('payload', 255)->nullable()->change();
+	});
     }
 
     /**
@@ -24,8 +21,8 @@ return new class extends Migration
      */
     public function down(): void
     {
-        Schema::table('cad_endpoints', function (Blueprint $table) {
-            //
-        });
+	Schema::table('cad_endpoints', function (Blueprint $table) {
+	    $table->string('payload', 255)->change();
+	});
     }
 };
