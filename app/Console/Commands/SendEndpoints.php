@@ -101,10 +101,6 @@ class SendEndpoints extends Command
         }
     }
 
-function applyAuthentication($endpoint, $client, &$headers) { /* ... lógica idêntica ao fetch ... */ }
-    /**
-     * Aplica a autenticação baseada no tipo configurado.
-     */
     private function applyAuthentication($endpoint, $client, &$headers)
     {
         $tipoAuth = strtolower($endpoint->autenticacao);
