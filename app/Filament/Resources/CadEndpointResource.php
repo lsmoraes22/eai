@@ -21,7 +21,7 @@ class CadEndpointResource extends Resource
 {
     protected static ?string $model = CadEndpoint::class;
 
-    protected static ?string $navigationIcon = 'heroicon-o-rectangle-stack';
+    protected static ?string $navigationIcon = 'heroicon-o-link';
     protected static ?string $navigationGroup = 'Cadastros';
 
     public static function form(Form $form): Form
@@ -44,6 +44,7 @@ class CadEndpointResource extends Resource
 			    ->required()
 			    ->options([
 				'entrada' => 'entrada',
+				'auth' => 'auth',
 				'saida' => 'saida'
 			    ]),
                         Select::make('tipo')
@@ -107,16 +108,27 @@ class CadEndpointResource extends Resource
                         Select::make('autenticacao')
                             ->label('Tipo de Autenticação')
                             ->options([
-                                'nenhum' => 'Nenhum',
-                                'basic'  => 'Basic Auth',
-                                'bearer' => 'Bearer Token',
+                                'nenhum'  => 'Nenhum',
+                                'basic'   => 'Basic Auth',
+                                'bearer'  => 'Bearer Token',
                                 'api_key' => 'API Key',
+				'oauth2'  => 'OAuth2',
                             ])
-                            ->default('nenhum'),
+                            ->default('nenhum')
+			    ->live(),
+			Select::make('type_storage_token')
+			    ->label('Local de armazenagem do token')
+			    ->options([
+			        'file' => 'Arquivo (Storage)',
+			        'client_token' => 'Token do Cliente (OAuth)',
+			        'fixed' => 'Fixo (Campo Auth Token)',
+			    ])
+			    ->default('fixed')
+			    ->required(),
                         TextInput::make('auth_user')
                             ->label('Usuário (Basic)')
-                            ->maxLength(100)
-                            ->visible(fn ($get) => $get('autenticacao') === 'basic'),
+                            ->visible(fn ($get) => $get('autenticacao') === 'basic')
+                            ->maxLength(100),
 
                         TextInput::make('auth_pass')
                             ->label('Senha (Basic)')
@@ -153,12 +165,37 @@ class CadEndpointResource extends Resource
                             ->label('Descrição')
                             ->maxLength(255)
                             ->columnSpanFull(),
-
+                        Select::make('type_storage_payload')
+                            ->label('Tipo de origem do payload')
+                            ->options([
+				'local' => 'local',
+				'database' => 'database',
+				'fixed' => 'fixed',
+				's3' => 's3',
+				'cloud' => 'cloud'
+                            ])
+                            ->default('local')
+                            ->required(),
                         TextInput::make('payload')
                             ->label('Payload')
                             ->maxLength(255)
                             ->columnSpanFull(),
-
+                        Select::make('timer')
+                            ->label('Timer')
+                            ->options([
+                                '0' => 'desligado',
+                                '1'    => 'a cada 1 minuto',
+                                '5'    => 'a cada 5 minutos',
+                                '10'   => 'a cada 10 minutos',
+				'15'   => 'a cada 15 minutos',
+				'30'   => 'a cada 30 minutos',
+				'60'   => 'a cada 1 hora',
+				'180'  => 'a cada 3 horas',
+				'360'  => 'a cada 6 horas',
+				'720'  => 'a cada 12 horas',
+				'1440' => 'a cada dia'
+                            ])
+                            ->default('0'),
                     ])
                     ->columns(2),
             ]);
@@ -168,6 +205,7 @@ class CadEndpointResource extends Resource
     {
         return $table
             ->columns([
+                Tables\Columns\TextColumn::make('id')->searchable()->toggleable(),
                 Tables\Columns\TextColumn::make('nome')->searchable(),
                 Tables\Columns\TextColumn::make('tipo'),
                 Tables\Columns\TextColumn::make('metodo'),

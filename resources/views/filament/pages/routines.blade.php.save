@@ -1,0 +1,18 @@
+<x-filament-panels::page>
+    <table class="min-w-full rounded-lg border border-gray-300">
+        <tbody>
+	<tr class="border-b"><th class="p-2">Rotina</th><th>Parâmetros</th><th class="p-2">Run</th></tr>
+        @foreach($rotinas as $rotina)
+            <tr class="border-b">
+                <td class="p-2 text-center">{{ $rotina }}</td>
+		<td class="p-2 text-center">{{ $parametros ? "<x-filament::text wire:name={$rotina}>" : '' }}</td>
+                <td class="p-2 text-center">
+                    <x-filament::button wire:click="execute('{{ $rotina }}','{$parametros[$rotina]}')" color="gray" icon="heroicon-o-play" >
+                    </x-filament::button>
+                </td>
+            </tr>
+        @endforeach
+        </tbody>
+    </table>
+</x-filament-panels::page>
+$parametros = $this->params[$rotina] ?? null;

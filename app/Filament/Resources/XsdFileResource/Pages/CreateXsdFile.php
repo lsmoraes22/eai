@@ -29,7 +29,7 @@ class CreateXsdFile extends CreateRecord
         $clientCode = Str::slug($client->code ?: $client->name);
 
         // Diretório final
-        $finalDir = storage_path("app/public/clients/{$clientCode}/xsd");
+        $finalDir = storage_path("app/public/polling/{$clientCode}/xsd");
         if (!is_dir($finalDir)) {
             mkdir($finalDir, 0777, true);
         }
@@ -42,7 +42,7 @@ class CreateXsdFile extends CreateRecord
         rename($tempPath, $finalPath);
 
         // Atualizar registro no banco
-        $record->path = "clients/{$clientCode}/xsd/{$filename}";
+        $record->path = "polling/{$clientCode}/xsd/{$filename}";
         $record->save();
 
         // Opcional: remover temp_file do modelo, se não for mais usado

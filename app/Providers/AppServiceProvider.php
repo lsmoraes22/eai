@@ -2,8 +2,10 @@
 
 namespace App\Providers;
 
+
 use Illuminate\Support\ServiceProvider;
 use Illuminate\Support\Facades\Event;
+use Illuminate\Support\Facades\URL;
 
 class AppServiceProvider extends ServiceProvider
 {
@@ -25,5 +27,9 @@ class AppServiceProvider extends ServiceProvider
             ServingFilament::class,
             RegenerateShieldPermissions::class
         );
+
+	if (app()->environment('production') || env('FORCE_HTTPS', false)) {
+              URL::forceScheme('https');
+    	}
     }
 }

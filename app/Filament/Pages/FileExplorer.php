@@ -11,7 +11,7 @@ class FileExplorer extends Page
     protected static ?string $navigationGroup = 'Armazenamento';
     protected static string $view = 'filament.pages.file-explorer';
 
-    public string $currentPath = 'clients';
+    public string $currentPath = '';
     public string $previewContent = '';
     public ?string $previewType = null; // 'image', 'text'
 

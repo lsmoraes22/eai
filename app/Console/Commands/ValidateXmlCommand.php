@@ -32,16 +32,16 @@ class ValidateXmlCommand extends Command
 		$removeNamespace = !(bool) $ep->namespace;
 
                 // Diretórios do pipeline
-                $incomingPath  = "clients/{$clientCode}/{$endpointExt}/incoming/{$endpointName}/raw/";
-                $validatedPath = "clients/{$clientCode}/{$endpointExt}/incoming/{$endpointName}/validated/";
-                $refusedPath   = "clients/{$clientCode}/{$endpointExt}/incoming/{$endpointName}/refused/";
+                $incomingPath  = "polling/{$clientCode}/{$endpointExt}/incoming/{$endpointName}/raw/";
+                $validatedPath = "polling/{$clientCode}/{$endpointExt}/incoming/{$endpointName}/validated/";
+                $refusedPath   = "polling/{$clientCode}/{$endpointExt}/incoming/{$endpointName}/refused/";
 
                 // Garantir que existam
                 Storage::disk('public')->makeDirectory($validatedPath);
                 Storage::disk('public')->makeDirectory($refusedPath);
 
                 // Caminho do XSD
-                $xsdPath = "clients/{$clientCode}/xsd/{$ep->nome}.xsd";
+                $xsdPath = "polling/{$clientCode}/xsd/{$ep->nome}.xsd";
 
                 if (!Storage::disk('public')->exists($xsdPath)) {
                     $this->error("❌ XSD não encontrado para endpoint {$ep->name}");

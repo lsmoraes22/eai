@@ -38,7 +38,7 @@ class EditXsdFile extends EditRecord
         $clientCode = Str::slug($client->code ?: $client->name);
         $uploadedPath = $data['temp_file'];  // "temp/xsd/arquivo.xsd"
         $filename = basename($uploadedPath);
-        $finalDir = "clients/{$clientCode}/xsd";
+        $finalDir = "polling/{$clientCode}/xsd";
         $finalPath = "{$finalDir}/{$filename}";
 
         Storage::disk('local')->makeDirectory($finalDir);

@@ -3,47 +3,112 @@
 namespace App\Filament\Resources;
 
 use App\Filament\Resources\ClientResource\Pages;
-use App\Filament\Resources\ClientResource\RelationManagers;
 use App\Models\Client;
 use Filament\Forms;
 use Filament\Forms\Form;
 use Filament\Resources\Resource;
 use Filament\Tables;
 use Filament\Tables\Table;
-use Illuminate\Database\Eloquent\Builder;
-use Illuminate\Database\Eloquent\SoftDeletingScope;
+use Filament\Forms\Components\Section;
+use Filament\Forms\Components\Grid;
 
 class ClientResource extends Resource
 {
     protected static ?string $model = Client::class;
-
-    protected static ?string $navigationIcon = 'heroicon-o-rectangle-stack';
+    protected static ?string $navigationIcon = 'heroicon-o-building-office'; // Ícone mais apropriado para Clientes
     protected static ?string $navigationGroup = 'Cadastros';
 
     public static function form(Form $form): Form
     {
         return $form
             ->schema([
-                Forms\Components\TextInput::make('name')
-                    ->required()
-                    ->maxLength(255),
-                Forms\Components\TextInput::make('code')
-                    ->required()
-		    ->rules(['regex:/^[A-Za-z0-9_]+$/'])
-		    ->helperText('Somente letras, números e underline.')
-                    ->maxLength(255),
-                Forms\Components\TextInput::make('telefone')
-                    ->tel()
-                    ->required()
-                    ->maxLength(255),
-                Forms\Components\TextInput::make('endereco')
-                    ->required()
-                    ->maxLength(255),
-                Forms\Components\TextInput::make('cnpj')
-                    ->required()
-                    ->maxLength(255),
-                Forms\Components\Toggle::make('active')
-                    ->required(),
+                // SEÇÃO: DADOS CADASTRAIS
+                Section::make('Informações Gerais')
+                    ->description('Dados básicos de identificação do cliente.')
+                    ->schema([
+                        Grid::make(2)->schema([
+                            Forms\Components\TextInput::make('name')
+                                ->label('Nome do Cliente')
+                                ->required()
+                                ->maxLength(255),
+                            Forms\Components\TextInput::make('code')
+                                ->label('Código Interno')
+                                ->required()
+                                ->unique(ignoreRecord: true)
+                                ->rules(['regex:/^[A-Za-z0-9_]+$/'])
+                                ->helperText('Somente letras, números e underline.')
+                                ->maxLength(255),
+                        ]),
+                        Grid::make(2)->schema([
+                            Forms\Components\TextInput::make('cnpj')
+                                ->label('CNPJ')
+                                ->mask('99.999.999/9999-99')
+                                ->required(),
+                            Forms\Components\TextInput::make('telefone')
+                                ->label('Telefone')
+                                ->tel()
+                                ->required(),
+                        ]),
+                        Forms\Components\TextInput::make('endereco')
+                            ->label('Endereço Completo')
+                            ->required()
+                            ->maxLength(255),
+                        Forms\Components\Toggle::make('active')
+                            ->label('Cliente Ativo')
+                            ->default(true)
+                            ->required(),
+                    ]),
+
+                // SEÇÃO: CONFIGURAÇÃO OAUTH2 (Bling, etc)
+                Section::make('Configurações de Autenticação (OAuth2)')
+                    ->description('Credenciais para integrações que utilizam tokens dinâmicos.')
+                    ->collapsible()
+                    ->schema([
+                        Grid::make(1)->schema([
+                            Forms\Components\TextInput::make('auth_url')
+                                ->label('URL de Autenticação')
+                                ->placeholder('https://www.bling.com.br/Api/v3/oauth/authorization')
+                                ->url()
+                                ->helperText('Endpoint para solicitação de autenticação.'),
+                        ]),
+                        Grid::make(1)->schema([
+                            Forms\Components\TextInput::make('token_url')
+                                ->label('URL de Token')
+                                ->placeholder('https://www.bling.com.br/Api/v3/oauth/token')
+                                ->url()
+                                ->helperText('Endpoint para troca e refresh de tokens.'),
+                        ]),
+                        Grid::make(2)->schema([
+                            Forms\Components\TextInput::make('app_client_id')
+                                ->label('App Client ID')
+                                ->password() // Oculta o ID por segurança
+                                ->revealable(),
+                            Forms\Components\TextInput::make('app_client_secret')
+                                ->label('App Client Secret')
+                                ->password()
+                                ->revealable(),
+                        ]),
+
+                        // Campos de Token (Geralmente preenchidos via API, mas visíveis para Debug)
+                        Grid::make(3)->schema([
+                            Forms\Components\Textarea::make('access_token')
+                                ->label('Access Token')
+                                ->rows(3)
+                                ->disabled() // Evita edição manual acidental
+                                ->dehydrated(false),
+                            Forms\Components\Textarea::make('refresh_token')
+                                ->label('Refresh Token')
+                                ->rows(3)
+                                ->disabled()
+                                ->dehydrated(false),
+                            Forms\Components\DateTimePicker::make('expires_at')
+                                ->label('Expira em')
+                                ->disabled(),
+                        ]),
+                        Forms\Components\TextInput::make('account_id')
+                            ->label('ID da Conta Externa')
+                            ->disabled(),
+                    ]),
             ]);
     }
 
@@ -52,33 +117,66 @@ class ClientResource extends Resource
         return $table
             ->columns([
                 Tables\Columns\TextColumn::make('id')
-                    ->searchable(),
+                    ->label('Id')
+                    ->sortable(),
                 Tables\Columns\TextColumn::make('name')
-                    ->searchable(),
+                    ->label('Nome')
+                    ->searchable()
+                    ->sortable(),
                 Tables\Columns\TextColumn::make('code')
-                    ->searchable(),
-                Tables\Columns\TextColumn::make('telefone')
-                    ->searchable(),
-                Tables\Columns\TextColumn::make('endereco')
+                    ->label('Código')
+                    ->copyable() // Facilita copiar o código para testes
                     ->searchable(),
                 Tables\Columns\TextColumn::make('cnpj')
+                    ->label('CNPJ')
                     ->searchable(),
                 Tables\Columns\IconColumn::make('active')
+                    ->label('Ativo')
                     ->boolean(),
+
+                // Status do Token na Tabela
+                Tables\Columns\TextColumn::make('expires_at')
+                    ->label('Token Expira')
+                    ->dateTime('d/m/H:i')
+                    ->color(fn ($state) => $state && $state->isPast() ? 'danger' : 'success')
+                    ->sortable(),
+
                 Tables\Columns\TextColumn::make('created_at')
-                    ->dateTime()
-                    ->sortable()
-                    ->toggleable(isToggledHiddenByDefault: true),
-                Tables\Columns\TextColumn::make('updated_at')
                     ->dateTime()
                     ->sortable()
                     ->toggleable(isToggledHiddenByDefault: true),
             ])
             ->filters([
-                //
+                Tables\Filters\TernaryFilter::make('active')
+                    ->label('Apenas Ativos'),
             ])
-            ->actions([
-                Tables\Actions\EditAction::make(),
+	    ->actions([
+		Tables\Actions\EditAction::make(),
+		Tables\Actions\Action::make('connect_oauth')
+		->label('Vincular Conta API')
+		->icon('heroicon-o-key')
+		->color('info')
+		->url(function (Client $record) {
+		    // Se não houver URL de autorização ou Client ID, o botão não funciona corretamente
+		    if (!$record->auth_url || !$record->app_client_id) {
+			return null;
+		    }
+
+                   // Monta os parâmetros padrão do OAuth2
+                    $params = [
+                        'response_type' => 'code',
+                        'client_id'     => $record->app_client_id,
+                        'redirect_uri'  => route('oauth.callback', ['id' => $record->id]),
+                        'state'         => bin2hex(random_bytes(16)), // State para segurança
+                        // 'scope'      => $record->scope, // Se você decidir adicionar uma coluna de scope no futuro
+                    ];
+
+                    // Retorna a URL completa: https://provedor.com/authorize?client_id=...&redirect_uri=...
+                    return $record->auth_url . '?' . http_build_query($params);
+                })
+                ->openUrlInNewTab()
+                // O botão só aparece se os dados mínimos de configuração existirem
+                ->visible(fn (Client $record) => $record->auth_url && $record->app_client_id),
             ])
             ->bulkActions([
                 Tables\Actions\BulkActionGroup::make([
@@ -89,11 +187,10 @@ class ClientResource extends Resource
 
     public static function getRelations(): array
     {
-	return [
-        	//RelationManagers\XsdFilesRelationManager::class,
-        	//RelationManagers\EndpointsRelationManager::class,
-        	//RelationManagers\RulesRelationManager::class,
-    	];
+        return [
+            // Descomente conforme precisar
+            // RelationManagers\EndpointsRelationManager::class,
+        ];
     }
 
     public static function getPages(): array

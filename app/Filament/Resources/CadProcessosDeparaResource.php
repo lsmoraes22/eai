@@ -18,7 +18,7 @@ use Illuminate\Database\Eloquent\SoftDeletingScope;
 class CadProcessosDeparaResource extends Resource
 {
     protected static ?string $model = CadProcessosDepara::class;
-    protected static ?string $navigationIcon = 'heroicon-o-rectangle-stack';
+    protected static ?string $navigationIcon = 'heroicon-o-arrows-right-left';
     protected static ?string $navigationGroup = 'Cadastros';
     public static function form(Form $form): Form
     {

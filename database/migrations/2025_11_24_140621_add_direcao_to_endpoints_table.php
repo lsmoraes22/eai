@@ -22,6 +22,8 @@ return new class extends Migration
      */
     public function down(): void
     {
-        Schema::dropIfExists('cad_devolucao');
+        Schema::table('cad_endpoints', function (Blueprint $table) {
+	    $table->dropColumn('direcao');
+	});
     }
 };

@@ -22,7 +22,7 @@ class CadProcessoResource extends Resource
 {
     protected static ?string $model = CadProcesso::class;
 
-    protected static ?string $navigationIcon = 'heroicon-o-rectangle-stack';
+    protected static ?string $navigationIcon = 'heroicon-o-cog-6-tooth';
     protected static ?string $navigationGroup = 'Cadastros';
 
     public static function form(Form $form): Form
@@ -57,8 +57,11 @@ class CadProcessoResource extends Resource
                     ->required(),
 		Toggle::make('active')
 		    ->label('Ativo?')
-                    ->default(true)
-            ]);
+                    ->default(true),
+      		TextInput::make('root_element')
+                    ->label('Elemento Root')
+                    ->default('root'),
+                ]);
     }
 
     public static function table(Table $table): Table
