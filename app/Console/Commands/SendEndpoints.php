@@ -101,7 +101,7 @@ class SendEndpoints extends Command
         }
     }
 
-vate function applyAuthentication($endpoint, $client, &$headers) { /* ... lógica idêntica ao fetch ... */ }
+function applyAuthentication($endpoint, $client, &$headers) { /* ... lógica idêntica ao fetch ... */ }
     /**
      * Aplica a autenticação baseada no tipo configurado.
      */
