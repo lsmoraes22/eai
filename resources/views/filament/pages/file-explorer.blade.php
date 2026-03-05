@@ -56,9 +56,20 @@
 @endif
 
 @if($previewType === 'none')
-    <div class="mt-4 text-gray-600">{{ $previewContent }}</div>
+    <div id="preview-content" class="mt-4 text-gray-600">{{ $previewContent }}</div>
 @endif
-
+    <button
+        x-data="{ copied: false }"
+        x-on:click="
+            navigator.clipboard.writeText(@js($previewContent));
+            copied = true;
+            setTimeout(() => copied = false, 2000);
+        "
+        class="mt-4 bg-gray-100 p-4 rounded shadow text-sm text-gray-500 hover:underline"
+    >
+        <span x-show="!copied">Copiar Preview</span>
+        <span x-show="copied">Copiado!</span>
+    </button>
 
 </x-filament::page>
 
