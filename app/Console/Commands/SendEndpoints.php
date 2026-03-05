@@ -45,9 +45,13 @@ class SendEndpoints extends Command
         $sourcePath = "polling/{$clientCode}/{$format}/outgoing/{$endpointSlug}/raw";
         $processedPath = "polling/{$clientCode}/{$format}/outgoing/{$endpointSlug}/processed";
 
-        if (!Storage::disk('public')->exists($sourcePath)) return;
+        if (!Storage::disk('public')->exists($sourcePath)){
+            $this->error(" Exceção: " . "Pasta de origem não existe: storage/app/public/{$sourcePath}"); 
+            return;
+        };
 
         $files = Storage::disk('public')->files($sourcePath);
+
 
         foreach ($files as $filePath) {
             $filename = basename($filePath);
@@ -59,8 +63,14 @@ class SendEndpoints extends Command
             $headers = is_array($endpoint->headers) ? $endpoint->headers : (json_decode($endpoint->headers, true) ?: []);
             $this->applyAuthentication($endpoint, $client, $headers);
 
-            // Define o Content-Type correto para o que está sendo enviado
-            $headers['Content-Type'] = ($format === 'json') ? 'application/json' : 'application/xml';
+            // Define o Content-Type correto para o que está sendo enviado xml json txt csv etc
+            switch ($format) {
+                case 'xml': $headers['Content-Type'] = 'application/xml'; break;
+                case 'json': $headers['Content-Type'] = 'application/json'; break;
+                case 'txt': $headers['Content-Type'] = 'text/plain'; break;
+                case 'csv': $headers['Content-Type'] = 'text/csv'; break;
+                default: $headers['Content-Type'] = 'application/octet-stream';
+            }
 
             try {
                 $method = strtolower($endpoint->metodo ?? 'post');
