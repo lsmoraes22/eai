@@ -14,11 +14,12 @@ class Routines extends Page
     public array $rotinas = [
         'app:fetch-endpoints',
         'app:validate-xml',
-	'app:validate-json',
+	    'app:validate-json',
         'app:convert-xml-json',
-	'app:convert-json-json',
-	'app:convert-json-xml',
-	'app:convert-xml-xml',
+	    'app:convert-json-json',
+	    'app:convert-json-xml',
+	    'app:convert-xml-xml',
+        'app:send-endpoints',
     ];
 
     /**
@@ -27,11 +28,12 @@ class Routines extends Page
     public array $parametros = [
         'app:fetch-endpoints' => ['id'],
         'app:validate-xml' => [],
-	'app:validate-json' => [],
+	    'app:validate-json' => [],
         'app:convert-xml-json' => [],
-	'app:convert-json-json' => [],
-	'app:convert-json-xml' => [],
-	'app:convert-xml-xml' => [],
+	    'app:convert-json-json' => [],
+	    'app:convert-json-xml' => [],
+	    'app:convert-xml-xml' => [],
+        'app:send-endpoints' => ['id'],
     ];
 
     /**
