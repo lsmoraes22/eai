@@ -183,7 +183,6 @@ class FetchEndpoints extends Command
         $endpointExt = Str::slug($endpoint->extensao ?: 'json');
 
         foreach ($this->auth_extensions as $ext) {
-//            $path = "polling/{$clientCode}/{$endpointExt}/auth/{$endpointSlug}/raw/auth.{$ext}";
 	    $path = "token/{$clientCode}/{$endpointSlug}/auth.txt";
             if (Storage::disk('public')->exists($path)) {
                 $content = Storage::disk('public')->get($path);
@@ -220,7 +219,8 @@ class FetchEndpoints extends Command
         Storage::disk('public')->makeDirectory($directory);
 
         $path = "{$directory}/{$filename}";
-        Storage::disk('public')->put($path, $response->body());
+        $response_body = str_replace("\"", "", $response->body());
+        Storage::disk('public')->put($path, $response_body);
 
         $this->info("Salvo: storage/app/public/{$path}");
 
