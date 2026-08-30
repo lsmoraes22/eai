@@ -3,6 +3,7 @@
 namespace App\Console\Commands;
 
 use Illuminate\Console\Command;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Storage;
 use App\Models\Client;
@@ -12,6 +13,10 @@ use Illuminate\Support\Str;
 
 class SendEndpoints extends Command
 {
+    // One request per item (30s default timeout); 10 minutes leaves conservative
+    // headroom for configured timeouts plus Storage and status persistence.
+    private const ITEM_LOCK_TTL_SECONDS = 600;
+
     protected $signature = 'app:send-endpoints {--id=}';
     protected $description = 'Envia arquivos da pasta outgoing/raw para os endpoints de destino.';
 
@@ -54,60 +59,82 @@ class SendEndpoints extends Command
 
 
         foreach ($files as $filePath) {
-            $filename = basename($filePath);
-            $content = Storage::disk('public')->get($filePath);
+            $lockKey = 'eai:send-item:' . hash('sha256', "{$endpoint->id}|{$filePath}");
+            $lock = Cache::lock($lockKey, self::ITEM_LOCK_TTL_SECONDS);
 
-            $this->info(" Enviando: {$filename} para {$endpoint->url}");
-
-            // 1. Prepara Headers e Auth (Igual ao seu Fetch)
-            $headers = is_array($endpoint->headers) ? $endpoint->headers : (json_decode($endpoint->headers, true) ?: []);
-            $this->applyAuthentication($endpoint, $client, $headers);
-
-            // Define o Content-Type correto para o que está sendo enviado xml json txt csv etc
-            switch ($format) {
-                case 'xml': $headers['Content-Type'] = 'application/xml'; break;
-                case 'json': $headers['Content-Type'] = 'application/json'; break;
-                case 'txt': $headers['Content-Type'] = 'text/plain'; break;
-                case 'csv': $headers['Content-Type'] = 'text/csv'; break;
-                default: $headers['Content-Type'] = 'application/octet-stream';
+            if (!$lock->get()) {
+                $this->comment(" Item " . basename($filePath) . " já está em processamento. Pulando.");
+                continue;
             }
 
             try {
-                $method = strtolower($endpoint->metodo ?? 'post');
+                $this->processFile($endpoint, $client, $filePath, $processedPath, $format);
+            } finally {
+                $lock->release();
+            }
+        }
+    }
 
-                // 2. Dispara o conteúdo do arquivo como Body
-                $response = Http::withHeaders($headers)
-                    ->timeout($endpoint->timeout ?? 30)
-                    ->withBody($content, $headers['Content-Type'])
-                    ->{$method}($endpoint->url);
+    private function processFile(CadEndpoint $endpoint, Client $client, string $filePath, string $processedPath, string $format): void
+    {
+        $filename = basename($filePath);
+        $content = Storage::disk('public')->get($filePath);
 
-                if ($response->successful()) {
-                    // 3. Sucesso: Move para processados e atualiza status
-                    Storage::disk('public')->makeDirectory($processedPath);
-                    Storage::disk('public')->move($filePath, "{$processedPath}/{$filename}");
+        $this->info(" Enviando: {$filename} para {$endpoint->url}");
 
-                    CadInterfaceStatus::where('int_arquivo', $filename)
-                        ->update([
-                            'int_status' => 1, // Enviado/Sucesso
-                            'int_mensagem' => 'Enviado com sucesso: ' . $response->status()
-                        ]);
+        // 1. Prepara Headers e Auth (Igual ao seu Fetch)
+        $headers = is_array($endpoint->headers) ? $endpoint->headers : (json_decode($endpoint->headers, true) ?: []);
+        $this->applyAuthentication($endpoint, $client, $headers);
 
-                    $this->info("   ✔ Sucesso!");
-                } else {
-                    // 4. Erro de API: Loga e mantém na pasta para retry
-                    $errorMsg = "Erro {$response->status()}: " . $response->body();
-                    $this->error(" Falha: " . $errorMsg);
+        // Define o Content-Type correto para o que está sendo enviado xml json txt csv etc
+        switch ($format) {
+            case 'xml': $headers['Content-Type'] = 'application/xml'; break;
+            case 'json': $headers['Content-Type'] = 'application/json'; break;
+            case 'txt': $headers['Content-Type'] = 'text/plain'; break;
+            case 'csv': $headers['Content-Type'] = 'text/csv'; break;
+            default: $headers['Content-Type'] = 'application/octet-stream';
+        }
 
-                    CadInterfaceStatus::where('int_arquivo', $filename)
-                        ->update([
-                            'int_status' => 2, // Erro no Envio
-                            'int_mensagem' => Str::limit($errorMsg, 250)
-                        ]);
+        try {
+            $method = strtolower($endpoint->metodo ?? 'post');
+
+            // 2. Dispara o conteúdo do arquivo como Body
+            $response = Http::withHeaders($headers)
+                ->timeout($endpoint->timeout ?? 30)
+                ->withBody($content, $headers['Content-Type'])
+                ->{$method}($endpoint->url);
+
+            if ($response->successful()) {
+                // 3. Sucesso: Move para processados e atualiza status
+                Storage::disk('public')->makeDirectory($processedPath);
+                $moved = Storage::disk('public')->move($filePath, "{$processedPath}/{$filename}");
+
+                if (!$moved) {
+                    $this->error(" Falha ao mover {$filename} para processados. O item permanece pendente.");
+                    return;
                 }
 
-            } catch (\Exception $e) {
-                $this->error(" Exceção: " . $e->getMessage());
+                CadInterfaceStatus::where('int_arquivo', $filename)
+                    ->update([
+                        'int_status' => 1, // Enviado/Sucesso
+                        'int_mensagem' => 'Enviado com sucesso: ' . $response->status()
+                    ]);
+
+                $this->info("   ✔ Sucesso!");
+            } else {
+                // 4. Erro de API: Loga e mantém na pasta para retry
+                $errorMsg = "Erro {$response->status()}: " . $response->body();
+                $this->error(" Falha: " . $errorMsg);
+
+                CadInterfaceStatus::where('int_arquivo', $filename)
+                    ->update([
+                        'int_status' => 2, // Erro no Envio
+                        'int_mensagem' => Str::limit($errorMsg, 250)
+                    ]);
             }
+
+        } catch (\Exception $e) {
+            $this->error(" Exceção: " . $e->getMessage());
         }
     }
 
