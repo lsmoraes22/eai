@@ -212,10 +212,14 @@ class FetchEndpoints extends Command
             }
         }
 
-        // 2. Autenticação via Arquivo Local (Legada)
-        $token = $this->getTokenFromFile($client->code ?: $client->name, $endpoint);
+        // 2. Autenticação conforme a origem configurada
+        $token = match ($endpoint->type_storage_token) {
+            'fixed' => $endpoint->auth_token,
+            'client_token' => $client->access_token,
+            default => $this->getTokenFromFile($client->code ?: $client->name, $endpoint),
+        };
 
-        if ($token) {
+        if (is_scalar($token) && $token !== '') {
             switch ($tipoAuth) {
                 case 'bearer': $headers['Authorization'] = 'Bearer ' . $token; break;
                 case 'basic':  $headers['Authorization'] = 'Basic ' . $token; break;
@@ -227,24 +231,54 @@ class FetchEndpoints extends Command
     private function getTokenFromFile($clientCode, $endpoint)
     {
         $endpointSlug = Str::slug($endpoint->nome);
-        $endpointExt = Str::slug($endpoint->extensao ?: 'json');
+        $path = "token/{$clientCode}/{$endpointSlug}/auth.txt";
 
-        foreach ($this->auth_extensions as $ext) {
-	    $path = "token/{$clientCode}/{$endpointSlug}/auth.txt";
-            if (Storage::disk('local')->exists($path)) {
-                try {
-                    $content = Crypt::decryptString(Storage::disk('local')->get($path));
-                } catch (DecryptException $e) {
-                    $this->error("   ❌ Token inválido ou não descriptografável em storage/app/{$path}");
-                    return null;
-                }
+        if (Storage::disk('local')->exists($path)) {
+            try {
+                $content = Crypt::decryptString(Storage::disk('local')->get($path));
+            } catch (DecryptException $e) {
+                $this->error("   ❌ Token inválido ou não descriptografável em storage/app/{$path}");
+                return null;
+            }
 
-                if ($ext === 'json') return data_get(json_decode($content, true), $endpoint->auth_token);
-                if ($ext === 'xml')  return data_get(json_decode(json_encode(simplexml_load_string($content)), true), $endpoint->auth_token);
-                return trim($content);
+            return $this->extractToken($content, $endpoint->auth_token, $path);
+        }
+
+        if (Storage::disk('public')->exists($path)) {
+            $this->warn(" Token legado lido de storage/app/public/{$path}; migre para storage privado.");
+            return $this->extractToken(Storage::disk('public')->get($path), $endpoint->auth_token, $path);
+        }
+
+        return null;
+    }
+
+    private function extractToken(string $content, ?string $configuredKey, string $path): ?string
+    {
+        $decoded = json_decode($content, true);
+
+        if (json_last_error() === JSON_ERROR_NONE && is_array($decoded)) {
+            return $this->validateTokenValue(data_get($decoded, $configuredKey ?: 'access_token'), $path);
+        }
+
+        if (in_array('xml', $this->auth_extensions, true) && str_starts_with(ltrim($content), '<')) {
+            $xml = simplexml_load_string($content);
+            if ($xml !== false) {
+                $decoded = json_decode(json_encode($xml), true);
+                return $this->validateTokenValue(data_get($decoded, $configuredKey ?: 'access_token'), $path);
             }
         }
-        return null;
+
+        return trim($content);
+    }
+
+    private function validateTokenValue($token, string $path): ?string
+    {
+        if ($token === null || is_array($token) || is_object($token)) {
+            $this->error("   ❌ Token ausente ou não escalar em storage/app/{$path}");
+            return null;
+        }
+
+        return trim((string) $token);
     }
 
     private function saveResponse($endpoint, $clientCode, $response, $format, ?CadInterfaceStatus $status = null)
@@ -272,7 +306,7 @@ class FetchEndpoints extends Command
         Storage::disk('local')->makeDirectory($directory);
 
         $path = "{$directory}/{$filename}";
-        $responseBody = str_replace("\"", "", $response->body());
+        $responseBody = $response->body();
         Storage::disk('local')->put($path, Crypt::encryptString($responseBody));
 
         $this->info("Salvo: storage/app/{$path}");

@@ -50,11 +50,7 @@ class SendEndpoints extends Command
         $sourcePath = "polling/{$clientCode}/{$format}/outgoing/{$endpointSlug}/raw";
         $processedPath = "polling/{$clientCode}/{$format}/outgoing/{$endpointSlug}/processed";
         $tokenPath = "token/{$clientCode}/{$endpointSlug}/auth.txt";
-        if(in_array($endpoint->autenticacao, ['api_key', 'bearer', 'basic'], true) && $endpoint->type_storage_token === 'file'){
-            $token = $this->readTokenFromStorage($tokenPath);
-        } else {
-            $token = $endpoint->auth_token; // Para outros tipos de autenticação, o token é gerenciado internamente (ex: OAuth2)
-        }
+        $token = $this->resolveToken($endpoint, $client, $tokenPath);
 
         $disk = $localDisk->exists($sourcePath) ? $localDisk : $publicDisk;
 
@@ -73,7 +69,7 @@ class SendEndpoints extends Command
             $headers = is_array($endpoint->headers) ? $endpoint->headers : (json_decode($endpoint->headers, true) ?: []);
 
             if($endpoint->auth_api_way === 'header' && $token){
-                $this->applyAuthentication($endpoint, $client, $headers);
+                $this->applyAuthentication($endpoint, $client, $headers, $token);
             } else {
                 $content = $this->saveTokenIntoBody($endpoint, $content, $token); // Se necessário enviar o token no body, caso o endpoint exija isso (não é comum, mas pode acontecer)
             }
@@ -128,7 +124,7 @@ class SendEndpoints extends Command
         }
     }
 
-    private function applyAuthentication($endpoint, $client, &$headers)
+    private function applyAuthentication($endpoint, $client, &$headers, $resolvedToken = null)
     {
         $tipoAuth = strtolower($endpoint->autenticacao);
 
@@ -150,10 +146,10 @@ class SendEndpoints extends Command
             }
         }
 
-        // 2. Autenticação via Arquivo Local (Legada)
-        $token = $this->getTokenFromFile($client->code ?: $client->name, $endpoint);
+        // 2. Autenticação conforme a origem configurada
+        $token = $resolvedToken ?? $this->resolveToken($endpoint, $client);
 
-        if ($token) {
+        if (is_scalar($token) && $token !== '') {
             switch ($tipoAuth) {
                 case 'bearer': $headers['Authorization'] = 'Bearer ' . $token; break;
                 case 'basic':  $headers['Authorization'] = 'Basic ' . $token; break;
@@ -162,31 +158,66 @@ class SendEndpoints extends Command
         }
     }
 
-    private function getTokenFromFile($clientCode, $endpoint)
+    private function resolveToken($endpoint, $client, ?string $tokenPath = null)
     {
-        $endpointSlug = Str::slug($endpoint->nome);
-        $tokenPath = "token/{$clientCode}/{$endpointSlug}/auth.txt";
-
-        return $this->readTokenFromStorage($tokenPath);
+        return match ($endpoint->type_storage_token) {
+            'fixed' => $endpoint->auth_token,
+            'client_token' => $client->access_token,
+            default => $this->readTokenFromStorage(
+                $tokenPath ?: "token/" . ($client->code ?: $client->name) . "/" . Str::slug($endpoint->nome) . "/auth.txt",
+                $endpoint->auth_token
+            ),
+        };
     }
 
-    private function readTokenFromStorage(string $tokenPath): ?string
+    private function readTokenFromStorage(string $tokenPath, ?string $configuredKey = null): ?string
     {
         if (Storage::disk('local')->exists($tokenPath)) {
             try {
-                return Crypt::decryptString(Storage::disk('local')->get($tokenPath));
+                $content = Crypt::decryptString(Storage::disk('local')->get($tokenPath));
             } catch (DecryptException $e) {
                 $this->error(" Token inválido ou não descriptografável em storage/app/{$tokenPath}");
                 return null;
             }
+
+            return $this->extractToken($content, $configuredKey, $tokenPath);
         }
 
         if (Storage::disk('public')->exists($tokenPath)) {
             $this->warn(" Token legado lido de storage/app/public/{$tokenPath}; migre para storage privado.");
-            return trim(Storage::disk('public')->get($tokenPath));
+            return $this->extractToken(Storage::disk('public')->get($tokenPath), $configuredKey, $tokenPath);
         }
 
         return null;
+    }
+
+    private function extractToken(string $content, ?string $configuredKey, string $path): ?string
+    {
+        $decoded = json_decode($content, true);
+
+        if (json_last_error() === JSON_ERROR_NONE && is_array($decoded)) {
+            return $this->validateTokenValue(data_get($decoded, $configuredKey ?: 'access_token'), $path);
+        }
+
+        if (str_starts_with(ltrim($content), '<')) {
+            $xml = simplexml_load_string($content);
+            if ($xml !== false) {
+                $decoded = json_decode(json_encode($xml), true);
+                return $this->validateTokenValue(data_get($decoded, $configuredKey ?: 'access_token'), $path);
+            }
+        }
+
+        return trim($content);
+    }
+
+    private function validateTokenValue($token, string $path): ?string
+    {
+        if ($token === null || is_array($token) || is_object($token)) {
+            $this->error(" Token ausente ou não escalar em storage/app/{$path}");
+            return null;
+        }
+
+        return trim((string) $token);
     }
 
     private function saveTokenIntoBody($endpoint, $content, $token) //incomum para enviar token no body, mas pode ser necessário para algum endpoint específico. O ideal é que o token seja enviado via header, mas deixo esse método caso queira usar
