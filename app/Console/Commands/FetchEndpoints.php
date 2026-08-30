@@ -3,6 +3,7 @@
 namespace App\Console\Commands;
 
 use Illuminate\Console\Command;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Storage;
 use App\Models\Client;
@@ -13,6 +14,10 @@ use Carbon\Carbon;
 
 class FetchEndpoints extends Command
 {
+    // Um endpoint normalmente usa até 3 tentativas de 30s. Quinze minutos
+    // dão margem conservadora sem deixar um lock órfão preso por muito tempo.
+    private const ENDPOINT_LOCK_TTL_SECONDS = 900;
+
     /**
      * O nome e a assinatura do comando.
      * Adicionada a opção --id para execuções forçadas/testes.
@@ -62,6 +67,25 @@ class FetchEndpoints extends Command
      * Lógica principal de processamento de um único endpoint.
      */
     private function processEndpoint(CadEndpoint $endpoint)
+    {
+        $lock = Cache::lock(
+            "eai:fetch-endpoint:{$endpoint->id}",
+            self::ENDPOINT_LOCK_TTL_SECONDS
+        );
+
+        if (!$lock->get()) {
+            $this->line("   ℹ️ Endpoint ID {$endpoint->id} já está em processamento. Pulando.");
+            return;
+        }
+
+        try {
+            $this->processEndpointLocked($endpoint);
+        } finally {
+            $lock->release();
+        }
+    }
+
+    private function processEndpointLocked(CadEndpoint $endpoint)
     {
         $client = $endpoint->client;
         if (!$client) {
