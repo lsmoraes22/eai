@@ -32,6 +32,18 @@ class WebhookController extends Controller
 
         // 2. Validação HMAC (Agnóstica)
         if ($webhook->webhook_verify) {
+            $algorithm = strtolower((string) $webhook->webhook_algo);
+            $supportedAlgorithms = ['sha256', 'sha512'];
+
+            if (!in_array($algorithm, $supportedAlgorithms, true) || blank($webhook->client?->app_client_secret)) {
+                Log::error('Webhook com validação HMAC mal configurada.', [
+                    'client_id' => $client_id,
+                    'interface' => $interface,
+                ]);
+
+                return response()->json(['message' => 'Webhook mal configurado'], 500);
+            }
+
             $signature = $request->header($webhook->webhook_header);
 
             if (!$signature) {
@@ -39,10 +51,12 @@ class WebhookController extends Controller
             }
 
             // Remove o prefixo (ex: 'sha256=') para validar apenas o hash puro
-            $cleanSignature = str_replace($webhook->webhook_algo . '=', '', $signature);
+            $cleanSignature = Str::startsWith($signature, $algorithm . '=')
+                ? Str::after($signature, $algorithm . '=')
+                : $signature;
 
             // Importante: Usamos o client_secret do aplicativo vinculado ao cliente
-            $expected = hash_hmac($webhook->webhook_algo, $content, $webhook->client->app_client_secret);
+            $expected = hash_hmac($algorithm, $content, $webhook->client->app_client_secret);
 
             if (!hash_equals($expected, $cleanSignature)) {
                 Log::error("Falha de autenticação HMAC no Webhook: {$interface}");
@@ -65,7 +79,8 @@ class WebhookController extends Controller
 
         // 4. Salvamento do Arquivo
         $filename = now()->format('YmdHisv') . '_webhook.' . $extension;
-        $directory = "webhooks/{$clientCode}/{$extension}/incoming/{$interface}/raw";
+        $interfaceSlug = Str::slug($webhook->nome);
+        $directory = "webhooks/{$clientCode}/{$extension}/incoming/{$interfaceSlug}/raw";
 
         try {
             Storage::disk('public')->makeDirectory($directory);

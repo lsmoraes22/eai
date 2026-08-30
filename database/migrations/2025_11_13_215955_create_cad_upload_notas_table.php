@@ -19,7 +19,7 @@ return new class extends Migration
             $table->dateTime('cun_data')->nullable()->comment('Data e hora do upload');
             $table->string('cun_usuario', 10)->nullable()->comment('Usuário responsável pelo upload');
 
-            $table->unique(['cun_refliv', 'cun_nota'], 'NewIndex1');
+            $table->unique(['cun_refliv', 'cun_nota'], 'cad_upload_notas_refliv_nota_unique');
         });
     }
 

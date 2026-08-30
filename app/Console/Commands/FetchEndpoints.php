@@ -3,6 +3,9 @@
 namespace App\Console\Commands;
 
 use Illuminate\Console\Command;
+use Illuminate\Contracts\Encryption\DecryptException;
+use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\Crypt;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Storage;
 use App\Models\Client;
@@ -13,6 +16,12 @@ use Carbon\Carbon;
 
 class FetchEndpoints extends Command
 {
+    private const STATUS_PENDING = 0;
+    private const STATUS_SUCCESS = 1;
+    private const STATUS_FAILED = 2;
+    private const STATUS_PROCESSING = 3;
+    private const STATUS_DEAD = 5;
+
     /**
      * O nome e a assinatura do comando.
      * Adicionada a opção --id para execuções forçadas/testes.
@@ -66,6 +75,22 @@ class FetchEndpoints extends Command
      */
     private function processEndpoint(CadEndpoint $endpoint)
     {
+        $lock = Cache::lock("fetch-endpoint:{$endpoint->id}", (int) ($endpoint->timeout ?? 30) + 30);
+
+        if (!$lock->get()) {
+            $this->warn("   ⚠️ Endpoint ID {$endpoint->id} já está em processamento.");
+            return;
+        }
+
+        try {
+            $this->processEndpointLocked($endpoint);
+        } finally {
+            $lock->release();
+        }
+    }
+
+    private function processEndpointLocked(CadEndpoint $endpoint)
+    {
         $client = $endpoint->client;
         if (!$client) {
             $this->error("❌ Erro: Endpoint ID {$endpoint->id} não possui um Cliente vinculado.");
@@ -106,6 +131,28 @@ class FetchEndpoints extends Command
         $method = strtolower($endpoint->metodo ?? 'get');
         $timeout = (int) ($endpoint->timeout ?? 30);
         $attempts = (int) ($endpoint->tentativas ?? 3);
+        $payload = is_array($endpoint->payload) ? $endpoint->payload : json_decode($endpoint->payload, true);
+
+        if (!$this->isAllowedMethod($method)) {
+            $this->recordStatus($endpoint, null, self::STATUS_FAILED, "Método HTTP não permitido: {$method}");
+            $this->error("   ❌ Método HTTP não permitido: {$method}");
+            return;
+        }
+
+        if ($method === 'get' && $this->containsSensitivePayload($payload)) {
+            $this->recordStatus($endpoint, null, self::STATUS_FAILED, 'Payload sensível bloqueado em requisição GET.');
+            $this->error('   ❌ Payload sensível bloqueado em requisição GET. Use POST/PUT/PATCH.');
+            return;
+        }
+
+        $idempotencyKey = $this->makeIdempotencyKey($endpoint, $client, $payload);
+
+        if ($this->hasSuccessfulRun($idempotencyKey)) {
+            $this->warn("   ⚠️ Execução idempotente já concluída: {$idempotencyKey}");
+            return;
+        }
+
+        $status = $this->recordStatus($endpoint, $idempotencyKey, self::STATUS_PROCESSING, 'Processamento iniciado.');
 
         try {
             $request = Http::withHeaders($headers)->timeout($timeout);
@@ -115,9 +162,7 @@ class FetchEndpoints extends Command
                 $request->withBasicAuth($endpoint->auth_user, $endpoint->auth_pass);
             }
 
-            $request->retry($attempts, 200);
-
-            $payload = is_array($endpoint->payload) ? $endpoint->payload : json_decode($endpoint->payload, true);
+            $request->retry($attempts, 200, throw: false);
 
             // Determina se envia Body (Payload) ou Query Params
             if (in_array($method, ['post', 'put', 'patch'])) {
@@ -129,14 +174,16 @@ class FetchEndpoints extends Command
 
             if (!$response->successful()) {
                 $this->error("   ❌ Falha HTTP [{$response->status()}] para {$endpoint->url}");
+                $this->markFailedOrDead($status, $endpoint, $idempotencyKey, "Falha HTTP {$response->status()}");
                 return;
             }
 
             // D. TRATAMENTO DO RETORNO E SALVAMENTO
-            $this->saveResponse($endpoint, $clientCode, $response, $format);
+            $this->saveResponse($endpoint, $clientCode, $response, $format, $status);
 
         } catch (\Exception $e) {
             $this->error("   ❌ Erro crítico na requisição: " . $e->getMessage());
+            $this->markFailedOrDead($status, $endpoint, $idempotencyKey, 'Exceção na requisição.');
         }
     }
 
@@ -184,8 +231,14 @@ class FetchEndpoints extends Command
 
         foreach ($this->auth_extensions as $ext) {
 	    $path = "token/{$clientCode}/{$endpointSlug}/auth.txt";
-            if (Storage::disk('public')->exists($path)) {
-                $content = Storage::disk('public')->get($path);
+            if (Storage::disk('local')->exists($path)) {
+                try {
+                    $content = Crypt::decryptString(Storage::disk('local')->get($path));
+                } catch (DecryptException $e) {
+                    $this->error("   ❌ Token inválido ou não descriptografável em storage/app/{$path}");
+                    return null;
+                }
+
                 if ($ext === 'json') return data_get(json_decode($content, true), $endpoint->auth_token);
                 if ($ext === 'xml')  return data_get(json_decode(json_encode(simplexml_load_string($content)), true), $endpoint->auth_token);
                 return trim($content);
@@ -194,7 +247,7 @@ class FetchEndpoints extends Command
         return null;
     }
 
-    private function saveResponse($endpoint, $clientCode, $response, $format)
+    private function saveResponse($endpoint, $clientCode, $response, $format, ?CadInterfaceStatus $status = null)
     {
         $endpointSlug = Str::slug($endpoint->nome);
         $endpointExt = Str::slug($endpoint->extensao ?: 'json');
@@ -208,30 +261,114 @@ class FetchEndpoints extends Command
         };
 
 	if($direcao=='auth'){
-            // Define nome do arquivo
-            $filename = 'auth.txt';
+        // Define nome do arquivo
+        $filename = 'auth.txt';
 	    $directory = "token/{$clientCode}/{$endpointSlug}";
 	} else {
             // Define nome do arquivo
             $filename = now()->format('YmdHisv') . '.' .  $format;
             $directory = "polling/{$clientCode}/{$endpointExt}/{$direcao}/{$endpointSlug}/raw";
 	}
-        Storage::disk('public')->makeDirectory($directory);
+        Storage::disk('local')->makeDirectory($directory);
 
         $path = "{$directory}/{$filename}";
-        $response_body = str_replace("\"", "", $response->body());
-        Storage::disk('public')->put($path, $response_body);
+        $responseBody = str_replace("\"", "", $response->body());
+        Storage::disk('local')->put($path, Crypt::encryptString($responseBody));
 
-        $this->info("Salvo: storage/app/public/{$path}");
+        $this->info("Salvo: storage/app/{$path}");
 
         // Registro de Status
-        CadInterfaceStatus::create([
+        $data = [
             'int_direcao'    => ($direcao === 'auth' ? 'auth' : 'entrada'),
             'int_interface'  => $endpoint->nome,
             'int_arquivo'    => $filename,
-            'int_idoc'       => pathinfo($filename, PATHINFO_FILENAME),
-            'int_status'     => 0,
+            'int_status'     => self::STATUS_SUCCESS,
+            'int_data_processamento' => now(),
             'int_data_envio' => now(),
+            'int_mensagem' => 'Resposta salva em storage privado.',
+        ];
+
+        if ($status) {
+            $status->update($data);
+            return;
+        }
+
+        $data['int_idoc'] = pathinfo($filename, PATHINFO_FILENAME);
+        CadInterfaceStatus::create($data);
+    }
+
+    private function isAllowedMethod(string $method): bool
+    {
+        return in_array($method, ['get', 'post', 'put', 'patch'], true);
+    }
+
+    private function containsSensitivePayload($payload): bool
+    {
+        if (!is_array($payload)) {
+            return false;
+        }
+
+        $sensitiveKeys = [
+            'authorization', 'token', 'access_token', 'refresh_token', 'api_key',
+            'apikey', 'password', 'passwd', 'senha', 'secret', 'client_secret',
+            'cpf', 'cnpj', 'email',
+        ];
+
+        foreach ($payload as $key => $value) {
+            $normalizedKey = Str::of((string) $key)->lower()->replace(['-', ' '], '_')->toString();
+
+            if (in_array($normalizedKey, $sensitiveKeys, true)) {
+                return true;
+            }
+
+            if (is_array($value) && $this->containsSensitivePayload($value)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private function makeIdempotencyKey(CadEndpoint $endpoint, Client $client, ?array $payload): string
+    {
+        $period = now()->format('YmdHi');
+        $payloadHash = hash('sha256', json_encode($payload ?: []));
+
+        return substr(hash('sha256', "{$client->id}:{$endpoint->id}:{$period}:{$payloadHash}"), 0, 30);
+    }
+
+    private function hasSuccessfulRun(string $idempotencyKey): bool
+    {
+        return CadInterfaceStatus::where('int_idoc', $idempotencyKey)
+            ->where('int_status', self::STATUS_SUCCESS)
+            ->exists();
+    }
+
+    private function recordStatus(CadEndpoint $endpoint, ?string $idempotencyKey, int $status, string $message): CadInterfaceStatus
+    {
+        return CadInterfaceStatus::create([
+            'int_direcao' => strtolower($endpoint->direcao) === 'auth' ? 'auth' : 'entrada',
+            'int_interface' => $endpoint->nome,
+            'int_arquivo' => null,
+            'int_idoc' => $idempotencyKey ?: "endpoint-{$endpoint->id}-" . now()->format('YmdHisv'),
+            'int_status' => $status,
+            'int_mensagem' => Str::limit($message, 255),
+            'int_data_processamento' => now(),
+            'int_data_envio' => now(),
+        ]);
+    }
+
+    private function markFailedOrDead(CadInterfaceStatus $status, CadEndpoint $endpoint, string $idempotencyKey, string $message): void
+    {
+        $failures = CadInterfaceStatus::where('int_interface', $endpoint->nome)
+            ->where('int_idoc', $idempotencyKey)
+            ->whereIn('int_status', [self::STATUS_FAILED, self::STATUS_DEAD])
+            ->count();
+
+        $status->update([
+            'int_status' => $failures + 1 >= (int) ($endpoint->tentativas ?? 3) ? self::STATUS_DEAD : self::STATUS_FAILED,
+            'int_mensagem' => Str::limit($message, 255),
+            'int_data_processamento' => now(),
         ]);
     }
 }

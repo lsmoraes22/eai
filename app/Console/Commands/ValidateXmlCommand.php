@@ -3,6 +3,8 @@
 namespace App\Console\Commands;
 
 use Illuminate\Console\Command;
+use Illuminate\Contracts\Encryption\DecryptException;
+use Illuminate\Support\Facades\Crypt;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
 use App\Models\Client;
@@ -49,13 +51,19 @@ class ValidateXmlCommand extends Command
                 }
 
                 // Listar XMLs brutos
-                $xmlFiles = Storage::disk('public')->files($incomingPath);
+                $sourceDisk = Storage::disk('local')->files($incomingPath) ? 'local' : 'public';
+                $xmlFiles = Storage::disk($sourceDisk)->files($incomingPath);
                 foreach ($xmlFiles as $xmlFile) {
 
                     if (!str_ends_with($xmlFile, '.xml')) continue;
 
                     $filename = basename($xmlFile);
-                    $xmlContent = Storage::disk('public')->get($xmlFile);
+                    $xmlContent = $this->readRawFile($sourceDisk, $xmlFile);
+
+                    if ($xmlContent === null) {
+                        $this->error("❌ XML criptografado inválido: {$filename}");
+                        continue;
+                    }
 
 		    // Extrair conteúdo interno
 		    $xmlService = new \App\Services\XmlService();
@@ -84,7 +92,7 @@ class ValidateXmlCommand extends Command
                     // VALIDADO
                     if ($isValid) {
 
-                        Storage::disk('public')->move($xmlFile, $validatedPath . $filename);
+	                        $this->moveRawFile($xmlFile, $validatedPath . $filename, $sourceDisk, $xmlContent);
                         $cad->int_mensagem = "OK";
 		    	if ($xmlService->message) {
     			    // Você pode guardar isso no cad_interface_status
@@ -100,7 +108,7 @@ class ValidateXmlCommand extends Command
                     // RECUSADO
                     else {
 
-                        Storage::disk('public')->move($xmlFile, $refusedPath . $filename);
+	                        $this->moveRawFile($xmlFile, $refusedPath . $filename, $sourceDisk, $xmlContent);
 
                         $msg = '';
                         foreach ($errors as $err) {
@@ -113,9 +121,35 @@ class ValidateXmlCommand extends Command
 
                         $this->error("❌ RECUSADO: {$filename}");
                         $this->line($msg);
-                    }
+		    }
                 }
             }
         }
     }
+
+    private function readRawFile(string $disk, string $file): ?string
+    {
+        $content = Storage::disk($disk)->get($file);
+
+        if ($disk !== 'local') {
+            return $content;
+        }
+
+        try {
+            return Crypt::decryptString($content);
+        } catch (DecryptException $e) {
+            return null;
+        }
+    }
+
+    private function moveRawFile(string $from, string $to, string $sourceDisk, string $content): void
+    {
+        if ($sourceDisk === 'public') {
+            Storage::disk('public')->move($from, $to);
+            return;
+        }
+
+        Storage::disk('public')->put($to, $content);
+        Storage::disk('local')->delete($from);
+	}
 }

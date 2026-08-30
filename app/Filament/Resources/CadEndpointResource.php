@@ -31,22 +31,21 @@ class CadEndpointResource extends Resource
                 Section::make('Informações da Interface')
                     ->description('Dados principais do endpoint.')
                     ->schema([
-
-                Select::make('nome')
-                    ->label('Nome')
-                    ->required()
-                    ->options(CadProcesso::pluck('name', 'name'))
-                    ->searchable()
-                    ->preload(),
-			Select::make('direcao')
-			    ->label('Direção')
-			    ->searchable()
-			    ->required()
-			    ->options([
-				'entrada' => 'entrada',
-				'auth' => 'auth',
-				'saida' => 'saida'
-			    ]),
+                        Select::make('nome')
+                            ->label('Nome')
+                            ->required()
+                            ->options(CadProcesso::pluck('name', 'name'))
+                            ->searchable()
+                            ->preload(),
+                        Select::make('direcao')
+                            ->label('Direção')
+                            ->searchable()
+                            ->required()
+                            ->options([
+                            'entrada' => 'entrada',
+                            'auth' => 'auth',
+                            'saida' => 'saida'
+                            ]),
                         Select::make('tipo')
                             ->label('Tipo de Integração')
                             ->options([
@@ -63,15 +62,15 @@ class CadEndpointResource extends Resource
                                 'GET' => 'GET',
                                 'POST' => 'POST',
                                 'PUT' => 'PUT',
-				'PATCH' => 'PATCH'
+                				'PATCH' => 'PATCH'
                             ])
                             ->default('POST')
                             ->required(),
-			Select::make('client_id')
-	                    ->label('Cliente')
-	                    ->options(Client::all()->pluck('name', 'id')) // lista todos os clientes
-	                    ->searchable() // permite pesquisar
-	                    ->required(),
+			            Select::make('client_id')
+                            ->label('Cliente')
+                            ->options(Client::all()->pluck('name', 'id')) // lista todos os clientes
+                            ->searchable() // permite pesquisar
+                            ->required(),
                         Textarea::make('url')
                             ->label('URL')
                             ->rows(2)
@@ -82,14 +81,13 @@ class CadEndpointResource extends Resource
                                 'XML' => 'XML',
                                 'JSON' => 'JSON',
                                 'TXT' => 'TXT',
-				'CSV' => 'CSV'
+				                'CSV' => 'CSV'
                             ])
                             ->default('XML')
                             ->required(),
-			Toggle::make('namespace'),
+			            Toggle::make('namespace'),
                     ])
                     ->columns(2),
-
                 Section::make('Headers da Requisição')
                     ->description('Headers HTTP adicionais (JSON).')
                     ->schema([
@@ -112,19 +110,19 @@ class CadEndpointResource extends Resource
                                 'basic'   => 'Basic Auth',
                                 'bearer'  => 'Bearer Token',
                                 'api_key' => 'API Key',
-				'oauth2'  => 'OAuth2',
+                				'oauth2'  => 'OAuth2',
                             ])
                             ->default('nenhum')
-			    ->live(),
-			Select::make('type_storage_token')
-			    ->label('Local de armazenagem do token')
-			    ->options([
-			        'file' => 'Arquivo (Storage)',
-			        'client_token' => 'Token do Cliente (OAuth)',
-			        'fixed' => 'Fixo (Campo Auth Token)',
-			    ])
-			    ->default('fixed')
-			    ->required(),
+			                ->live(),
+                        Select::make('type_storage_token')
+                            ->label('Local de armazenagem do token')
+                            ->options([
+                                'file' => 'Arquivo (Storage)',
+                                'client_token' => 'Token do Cliente (OAuth)',
+                                'fixed' => 'Fixo (Campo Auth Token)',
+                            ])
+                            ->default('fixed')
+                            ->required(),
                         TextInput::make('auth_user')
                             ->label('Usuário (Basic)')
                             ->visible(fn ($get) => $get('autenticacao') === 'basic')
@@ -142,6 +140,11 @@ class CadEndpointResource extends Resource
                             ->visible(fn ($get) =>
                                 in_array($get('autenticacao'), ['bearer', 'api_key'])
                             ),
+                        TextInput::make('auth_api_way')
+                            ->label('Forma de Autenticação da API')
+                            ->default('header')
+                            ->required()
+                            ->helperText('Define onde vai o token de acesso: header (padrão) ou body. O ideal é enviar no header, mas alguns endpoints podem exigir que o token seja enviado no body da requisição.Caso seja, colocar o nome do campo do body onde o token deve ser inserido. Ex: "token" se o body for {"data": "value", "token": "the_token_here"})')
                     ])
                     ->columns(2),
 

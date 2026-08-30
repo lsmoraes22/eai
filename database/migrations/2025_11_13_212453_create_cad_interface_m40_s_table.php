@@ -27,7 +27,7 @@ return new class extends Migration
             $table->dateTime('cim40_data_envio')->nullable()->comment('Data e hora do envio do M40');
             $table->dateTime('cim40_data_envio_m41')->nullable()->comment('Data e hora do envio do M41 (interface de retorno)');
 
-            $table->unique(['cim40_po', 'cim40_delivery'], 'NewIndex1');
+            $table->unique(['cim40_po', 'cim40_delivery'], 'cad_interface_m40_po_delivery_unique');
         });
     }
 

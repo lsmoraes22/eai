@@ -162,17 +162,7 @@ class ClientResource extends Resource
 			return null;
 		    }
 
-                   // Monta os parâmetros padrão do OAuth2
-                    $params = [
-                        'response_type' => 'code',
-                        'client_id'     => $record->app_client_id,
-                        'redirect_uri'  => route('oauth.callback', ['id' => $record->id]),
-                        'state'         => bin2hex(random_bytes(16)), // State para segurança
-                        // 'scope'      => $record->scope, // Se você decidir adicionar uma coluna de scope no futuro
-                    ];
-
-                    // Retorna a URL completa: https://provedor.com/authorize?client_id=...&redirect_uri=...
-                    return $record->auth_url . '?' . http_build_query($params);
+                    return $record->buildOAuthAuthorizationUrl();
                 })
                 ->openUrlInNewTab()
                 // O botão só aparece se os dados mínimos de configuração existirem

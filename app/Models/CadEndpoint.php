@@ -13,13 +13,13 @@ class CadEndpoint extends Model
         'nome', 'tipo', 'metodo', 'client_id', 'url', 'extensao', 'namespace',
 	'headers', 'autenticacao', 'auth_user', 'direcao', 'timer', 'next_run',
 	'type_storage_token', 'auth_pass', 'auth_token', 'ativo', 'timeout',
-	'tentativas', 'descricao', 'payload',
+	'tentativas', 'descricao', 'payload', 'auth_api_way'
     ];
 
     protected $casts = [
         'headers' => 'array',
         'ativo' => 'boolean',
-	'next_run' => 'datetime',
+	    'next_run' => 'datetime',
     ];
 
     /**

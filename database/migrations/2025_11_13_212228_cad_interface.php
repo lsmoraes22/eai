@@ -16,7 +16,7 @@ return new class extends Migration
             $table->string('ci_usuario', 10)->nullable()->comment('Usuário responsável pela interface');
             $table->boolean('ci_interface_gerada')->default(false)->comment('Indica se a interface foi gerada (0 = Não, 1 = Sim)');
 
-            $table->unique(['ci_tipo', 'ci_ot'], 'NewIndex1');
+            $table->unique(['ci_tipo', 'ci_ot'], 'cad_interface_tipo_ot_unique');
         });
     }
 

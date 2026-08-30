@@ -33,7 +33,7 @@ return new class extends Migration
                 ->comment('Data e hora da geração da interface de planejamento');
 
             // Índices e chaves
-            $table->unique(['cip_ot', 'cip_po'], 'NewIndex1');
+            $table->unique(['cip_ot', 'cip_po'], 'cad_interface_planejamentos_ot_po_unique');
         });
     }
 

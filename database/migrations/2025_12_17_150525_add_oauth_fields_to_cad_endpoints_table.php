@@ -19,9 +19,9 @@ return new class extends Migration
                   ->after('autenticacao')
                   ->comment('Define de onde o sistema deve extrair o token de acesso');
 
-            // 2. Modifica o ENUM de autenticação para incluir 'oauth2'
-            // Nota: Em MariaDB/MySQL usamos statement bruto para alterar ENUM com segurança
-            DB::statement("ALTER TABLE cad_endpoints MODIFY COLUMN autenticacao ENUM('nenhum','basic','bearer','api_key','oauth2') NOT NULL DEFAULT 'nenhum'");
+            if (in_array(DB::connection()->getDriverName(), ['mysql', 'mariadb'], true)) {
+                DB::statement("ALTER TABLE cad_endpoints MODIFY COLUMN autenticacao ENUM('nenhum','basic','bearer','api_key','oauth2') NOT NULL DEFAULT 'nenhum'");
+            }
         });
     }
 
@@ -32,8 +32,9 @@ return new class extends Migration
     {
         Schema::table('cad_endpoints', function (Blueprint $table) {
             $table->dropColumn('type_storage_token');
-            // Reverte o ENUM para o estado anterior
-            DB::statement("ALTER TABLE cad_endpoints MODIFY COLUMN autenticacao ENUM('nenhum','basic','bearer','api_key') NOT NULL DEFAULT 'nenhum'");
+            if (in_array(DB::connection()->getDriverName(), ['mysql', 'mariadb'], true)) {
+                DB::statement("ALTER TABLE cad_endpoints MODIFY COLUMN autenticacao ENUM('nenhum','basic','bearer','api_key') NOT NULL DEFAULT 'nenhum'");
+            }
         });
     }
 };
