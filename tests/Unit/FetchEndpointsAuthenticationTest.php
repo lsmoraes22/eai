@@ -83,28 +83,86 @@ test('fetch rejects non scalar token values', function () {
         ->and($output)->toContain('Token ausente ou não escalar');
 });
 
-test('fetch preserves the original json when saving an auth response', function () {
+test('fetch preserves response bodies exactly as received in raw storage', function () {
     $status = Mockery::mock('alias:App\\Models\\CadInterfaceStatus');
-    $status->shouldReceive('create')->once();
+    $status->shouldReceive('create')->times(7);
 
     $command = new FetchEndpoints();
     $buffer = new BufferedOutput();
     $command->setOutput(new OutputStyle(new ArrayInput([]), $buffer));
-    $endpoint = fetchEndpoint([
-        'nome' => 'auth-token',
-        'direcao' => 'auth',
-        'extensao' => 'json',
-    ]);
-    $body = json_encode([
-        'access_token' => 'algar-token',
-        'token_type' => 'bearer',
-        'expires_in' => 3600,
-    ]);
-    $response = Mockery::mock();
-    $response->shouldReceive('body')->once()->andReturn($body);
     $method = new ReflectionMethod($command, 'saveResponse');
 
-    $method->invoke($command, $endpoint, 'cliente-fetch', $response, 'json');
+    $cases = [
+        'json' => [
+            'direction' => 'entrada',
+            'extension' => 'json',
+            'body' => '{"data":[],"meta":{"currentPage":1,"pageSize":10,"totalItems":0,"totalPages":1}}',
+        ],
+        'json-escaped-unicode' => [
+            'direction' => 'entrada',
+            'extension' => 'json',
+            'body' => '{"message":"Ele disse: \\"Olá, mundo!\\"","city":"São Paulo","emoji":"🚀"}',
+        ],
+        'xml' => [
+            'direction' => 'entrada',
+            'extension' => 'xml',
+            'body' => '<?xml version="1.0" encoding="UTF-8"?><item id="42" active="true">valor</item>',
+        ],
+        'csv' => [
+            'direction' => 'entrada',
+            'extension' => 'csv',
+            'body' => "id,description\r\n1,\"valor, com vírgula\"\r\n",
+        ],
+        'txt' => [
+            'direction' => 'entrada',
+            'extension' => 'txt',
+            'body' => 'Texto contendo "aspas" deve permanecer intacto.',
+        ],
+        'auth' => [
+            'direction' => 'auth',
+            'extension' => 'json',
+            'body' => '{"access_token":"algar-token","token_type":"bearer","expires_in":3600}',
+        ],
+        'invalid-json' => [
+            'direction' => 'entrada',
+            'extension' => 'json',
+            'body' => '{"data":[invalid],"meta":{"currentPage":1}}',
+        ],
+    ];
 
-    expect(Storage::disk('public')->get('token/cliente-fetch/auth-token/auth.txt'))->toBe($body);
+    foreach ($cases as $name => $case) {
+        $endpoint = fetchEndpoint([
+            'nome' => $name,
+            'direcao' => $case['direction'],
+            'extensao' => $case['extension'],
+        ]);
+        $response = Mockery::mock();
+        $response->shouldReceive('body')->once()->andReturn($case['body']);
+
+        $method->invoke($command, $endpoint, 'cliente-fetch', $response, $case['extension']);
+
+        if ($case['direction'] === 'auth') {
+            expect(Storage::disk('public')->get('token/cliente-fetch/auth/auth.txt'))->toBe($case['body']);
+        } else {
+            $path = "polling/cliente-fetch/{$case['extension']}/incoming/{$name}/raw";
+            $files = Storage::disk('public')->files($path);
+
+            expect($files)->toHaveCount(1)
+                ->and(Storage::disk('public')->get($files[0]))->toBe($case['body']);
+        }
+    }
+
+    $savedJson = Storage::disk('public')->get(Storage::disk('public')->files(
+        'polling/cliente-fetch/json/incoming/json/raw'
+    )[0]);
+
+    expect(json_decode($savedJson, true))->toBe([
+        'data' => [],
+        'meta' => [
+            'currentPage' => 1,
+            'pageSize' => 10,
+            'totalItems' => 0,
+            'totalPages' => 1,
+        ],
+    ])->and(json_last_error())->toBe(JSON_ERROR_NONE);
 });

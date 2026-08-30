@@ -244,9 +244,7 @@ class FetchEndpoints extends Command
         Storage::disk('public')->makeDirectory($directory);
 
         $path = "{$directory}/{$filename}";
-        $response_body = $direcao === 'auth'
-            ? $response->body()
-            : str_replace("\"", "", $response->body());
+        $response_body = $response->body();
         Storage::disk('public')->put($path, $response_body);
 
         $this->info("Salvo: storage/app/public/{$path}");
