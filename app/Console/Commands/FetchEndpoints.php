@@ -21,9 +21,6 @@ class FetchEndpoints extends Command
 
     protected $description = 'Baixa arquivos XML/JSON dos endpoints agendados, lida com autenticação e salva no storage.';
 
-    // Extensões para busca de arquivos de autenticação legados
-    private $auth_extensions = ['json', 'xml', 'txt'];
-
     public function handle()
     {
         $startTime = microtime(true);
@@ -165,10 +162,14 @@ class FetchEndpoints extends Command
             }
         }
 
-        // 2. Autenticação via Arquivo Local (Legada)
-        $token = $this->getTokenFromFile($client->code ?: $client->name, $endpoint);
+        // 2. Autenticação conforme a origem configurada
+        $token = match ($endpoint->type_storage_token) {
+            'fixed' => $endpoint->auth_token,
+            'client_token' => $client->access_token,
+            default => $this->getTokenFromFile($client->code ?: $client->name, $endpoint),
+        };
 
-        if ($token) {
+        if (is_scalar($token) && $token !== '') {
             switch ($tipoAuth) {
                 case 'bearer': $headers['Authorization'] = 'Bearer ' . $token; break;
                 case 'basic':  $headers['Authorization'] = 'Basic ' . $token; break;
@@ -180,18 +181,42 @@ class FetchEndpoints extends Command
     private function getTokenFromFile($clientCode, $endpoint)
     {
         $endpointSlug = Str::slug($endpoint->nome);
-        $endpointExt = Str::slug($endpoint->extensao ?: 'json');
+        $path = "token/{$clientCode}/{$endpointSlug}/auth.txt";
 
-        foreach ($this->auth_extensions as $ext) {
-	    $path = "token/{$clientCode}/{$endpointSlug}/auth.txt";
-            if (Storage::disk('public')->exists($path)) {
-                $content = Storage::disk('public')->get($path);
-                if ($ext === 'json') return data_get(json_decode($content, true), $endpoint->auth_token);
-                if ($ext === 'xml')  return data_get(json_decode(json_encode(simplexml_load_string($content)), true), $endpoint->auth_token);
-                return trim($content);
+        if (Storage::disk('public')->exists($path)) {
+            return $this->extractToken(Storage::disk('public')->get($path), $endpoint->auth_token, $path);
+        }
+
+        return null;
+    }
+
+    private function extractToken(string $content, ?string $configuredKey, string $path): ?string
+    {
+        $decoded = json_decode($content, true);
+
+        if (json_last_error() === JSON_ERROR_NONE && is_array($decoded)) {
+            return $this->validateTokenValue(data_get($decoded, $configuredKey ?: 'access_token'), $path);
+        }
+
+        if (str_starts_with(ltrim($content), '<')) {
+            $xml = simplexml_load_string($content);
+            if ($xml !== false) {
+                $decoded = json_decode(json_encode($xml), true);
+                return $this->validateTokenValue(data_get($decoded, $configuredKey ?: 'access_token'), $path);
             }
         }
-        return null;
+
+        return trim($content);
+    }
+
+    private function validateTokenValue($token, string $path): ?string
+    {
+        if ($token === null || is_array($token) || is_object($token)) {
+            $this->error("   ❌ Token ausente ou não escalar em storage/app/public/{$path}");
+            return null;
+        }
+
+        return trim((string) $token);
     }
 
     private function saveResponse($endpoint, $clientCode, $response, $format)
@@ -219,7 +244,9 @@ class FetchEndpoints extends Command
         Storage::disk('public')->makeDirectory($directory);
 
         $path = "{$directory}/{$filename}";
-        $response_body = str_replace("\"", "", $response->body());
+        $response_body = $direcao === 'auth'
+            ? $response->body()
+            : str_replace("\"", "", $response->body());
         Storage::disk('public')->put($path, $response_body);
 
         $this->info("Salvo: storage/app/public/{$path}");
