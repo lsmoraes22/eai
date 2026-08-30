@@ -79,36 +79,33 @@ class FetchEndpoints extends Command
         }
 
         try {
-            $this->processEndpointLocked($endpoint);
+            try {
+                $success = $this->processEndpointLocked($endpoint);
+            } catch (\Throwable $e) {
+                $this->error("   ❌ Erro inesperado no processamento: " . $e->getMessage());
+                $success = false;
+            }
+
+            $this->updateNextRun($endpoint, $success);
         } finally {
             $lock->release();
         }
     }
 
-    private function processEndpointLocked(CadEndpoint $endpoint)
+    private function processEndpointLocked(CadEndpoint $endpoint): bool
     {
         $client = $endpoint->client;
         if (!$client) {
             $this->error("❌ Erro: Endpoint ID {$endpoint->id} não possui um Cliente vinculado.");
-            return;
+            return false;
         }
 
         $clientCode = $client->code ?: Str::slug($client->name);
         $this->info("👉 Processando: [{$client->name}] - {$endpoint->nome}");
 
-        // A. ATUALIZA PRÓXIMO AGENDAMENTO (Imediatamente para evitar sobreposição)
-        try {
-            $endpoint->next_run = $endpoint->timer==0 ? null : $endpoint->roundedTimestamp();
-            $endpoint->save();
-            if($endpoint->next_run){ $this->line("   📅 Próxima execução: {$endpoint->next_run->format('H:i:s')}"); }
-        } catch (\Exception $e) {
-            $this->error("   ❌ Erro ao agendar: " . $e->getMessage());
-            return;
-        }
-
         if (!$endpoint->url) {
             $this->warn("   ⚠️ Sem URL definida. Pulando.");
-            return;
+            return false;
         }
 
         // B. PREPARAÇÃO DE HEADERS E AUTENTICAÇÃO
@@ -116,7 +113,10 @@ class FetchEndpoints extends Command
         $format = strtolower($endpoint->extensao ?: 'json');
 
         // LÓGICA DE AUTENTICAÇÃO
-        $this->applyAuthentication($endpoint, $client, $headers);
+        if (!$this->applyAuthentication($endpoint, $client, $headers)) {
+            $this->error("   ❌ Não foi possível resolver a autenticação do endpoint.");
+            return false;
+        }
 
         // Define Accept default
         if (!isset($headers['Accept'])) {
@@ -150,25 +150,46 @@ class FetchEndpoints extends Command
 
             if (!$response->successful()) {
                 $this->error("   ❌ Falha HTTP [{$response->status()}] para {$endpoint->url}");
-                return;
+                return false;
             }
 
             // D. TRATAMENTO DO RETORNO E SALVAMENTO
-            $this->saveResponse($endpoint, $clientCode, $response, $format);
+            return $this->saveResponse($endpoint, $clientCode, $response, $format);
 
         } catch (\Exception $e) {
             $this->error("   ❌ Erro crítico na requisição: " . $e->getMessage());
+            return false;
+        }
+    }
+
+    private function updateNextRun(CadEndpoint $endpoint, bool $success): void
+    {
+        try {
+            $endpoint->next_run = $success
+                ? ($endpoint->timer == 0 ? null : $endpoint->roundedTimestamp())
+                : now()->addMinutes(5);
+            $endpoint->save();
+
+            if ($endpoint->next_run) {
+                $this->line("   📅 Próxima execução: {$endpoint->next_run->format('H:i:s')}");
+            }
+        } catch (\Exception $e) {
+            $this->error("   ❌ Erro ao agendar: " . $e->getMessage());
         }
     }
 
     /**
      * Aplica a autenticação baseada no tipo configurado.
      */
-    private function applyAuthentication($endpoint, $client, &$headers)
+    private function applyAuthentication($endpoint, $client, &$headers): bool
     {
         $tipoAuth = strtolower($endpoint->autenticacao);
 
-        if ($tipoAuth === 'nenhum') return;
+        if ($tipoAuth === 'nenhum') return true;
+
+        if ($tipoAuth === 'basic' && $endpoint->auth_user && $endpoint->auth_pass) {
+            return true;
+        }
 
         // 1. Caso Especial: OAuth2 - Busca no Model Client
         if ($tipoAuth === 'oauth2') {
@@ -182,7 +203,7 @@ class FetchEndpoints extends Command
 
             if ($token) {
                 $headers['Authorization'] = 'Bearer ' . $token;
-                return;
+                return true;
             }
         }
 
@@ -198,8 +219,13 @@ class FetchEndpoints extends Command
                 case 'bearer': $headers['Authorization'] = 'Bearer ' . $token; break;
                 case 'basic':  $headers['Authorization'] = 'Basic ' . $token; break;
                 case 'api_key': $headers['Authorization'] = 'Api Key ' . $token; break;
+                default: return false;
             }
+
+            return true;
         }
+
+        return false;
     }
 
     private function getTokenFromFile($clientCode, $endpoint)
@@ -243,7 +269,7 @@ class FetchEndpoints extends Command
         return trim((string) $token);
     }
 
-    private function saveResponse($endpoint, $clientCode, $response, $format)
+    private function saveResponse($endpoint, $clientCode, $response, $format): bool
     {
         $endpointSlug = Str::slug($endpoint->nome);
         $endpointExt = Str::slug($endpoint->extensao ?: 'json');
@@ -269,7 +295,12 @@ class FetchEndpoints extends Command
 
         $path = "{$directory}/{$filename}";
         $response_body = $response->body();
-        Storage::disk('public')->put($path, $response_body);
+        $saved = Storage::disk('public')->put($path, $response_body);
+
+        if (!$saved) {
+            $this->error("   ❌ Falha ao salvar: storage/app/public/{$path}");
+            return false;
+        }
 
         $this->info("Salvo: storage/app/public/{$path}");
 
@@ -282,5 +313,7 @@ class FetchEndpoints extends Command
             'int_status'     => 0,
             'int_data_envio' => now(),
         ]);
+
+        return true;
     }
 }

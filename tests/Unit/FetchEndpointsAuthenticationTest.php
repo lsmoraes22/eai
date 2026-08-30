@@ -4,6 +4,8 @@ use App\Console\Commands\FetchEndpoints;
 use App\Models\CadEndpoint;
 use App\Models\Client;
 use Illuminate\Console\OutputStyle;
+use Illuminate\Database\Schema\Blueprint;
+use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Facades\Storage;
 use Symfony\Component\Console\Input\ArrayInput;
 use Symfony\Component\Console\Output\BufferedOutput;
@@ -42,6 +44,18 @@ function fetchClient(array $attributes = []): Client
 
 beforeEach(function () {
     Storage::fake('public');
+    Schema::create('cad_interface_status', function (Blueprint $table) {
+        $table->id('int_id');
+        $table->string('int_direcao')->nullable();
+        $table->string('int_interface')->nullable();
+        $table->string('int_arquivo')->nullable();
+        $table->string('int_idoc')->nullable();
+        $table->integer('int_status')->nullable();
+        $table->dateTime('int_data_processamento')->nullable();
+        $table->string('int_envio')->nullable();
+        $table->string('int_mensagem')->nullable();
+        $table->dateTime('int_data_envio');
+    });
 });
 
 test('fetch uses the default or configured key from json tokens', function (?string $key, array $content, string $expected) {
@@ -84,9 +98,6 @@ test('fetch rejects non scalar token values', function () {
 });
 
 test('fetch preserves response bodies exactly as received in raw storage', function () {
-    $status = Mockery::mock('alias:App\\Models\\CadInterfaceStatus');
-    $status->shouldReceive('create')->times(7);
-
     $command = new FetchEndpoints();
     $buffer = new BufferedOutput();
     $command->setOutput(new OutputStyle(new ArrayInput([]), $buffer));
