@@ -81,6 +81,7 @@ test('the endpoint form exposes only the page pagination configuration', functio
 
     expect($components)->toHaveKeys([
         'pagination.type',
+        'pagination.location',
         'pagination.page_param',
         'pagination.page_start',
         'pagination.page_size_param',
@@ -99,6 +100,7 @@ test('the endpoint form exposes only the page pagination configuration', functio
 
     $configuredPagination = [
         'type' => 'page',
+        'location' => 'query',
         'page_param' => 'page',
         'page_start' => 1,
         'page_size_param' => 'size',

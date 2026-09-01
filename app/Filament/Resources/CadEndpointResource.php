@@ -212,6 +212,15 @@ class CadEndpointResource extends Resource
                             ])
                             ->default('none')
                             ->live(),
+                        Select::make('pagination.location')
+                            ->label('Local dos parâmetros')
+                            ->options([
+                                'query' => 'Query',
+                                'body' => 'Body',
+                            ])
+                            ->default('query')
+                            ->required(fn ($get) => $get('pagination.type') === 'page')
+                            ->visible(fn ($get) => $get('pagination.type') === 'page'),
                         TextInput::make('pagination.page_param')
                             ->label('Parâmetro da página')
                             ->default('page')

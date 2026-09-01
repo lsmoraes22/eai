@@ -64,6 +64,11 @@ function requestQuery($request): array
     return $query;
 }
 
+function requestBody($request): array
+{
+    return $request->data();
+}
+
 beforeEach(function () {
     Carbon::setTestNow('2026-09-01 10:07:00.123');
     config(['cache.default' => 'array']);
@@ -190,6 +195,87 @@ test('one page sends configured defaults and saves one raw', function () {
     expect($files)->toHaveCount(1)
         ->and(basename($files[0]))->toBe('20260901100700123-page-000001.json')
         ->and(Storage::disk('public')->get($files[0]))->toBe($body);
+});
+
+test('a missing null or empty location defaults to query', function (array $pagination) {
+    $endpoint = createPaginationEndpoint([
+        'payload' => json_encode(['status' => 'open']),
+        'pagination' => $pagination,
+    ]);
+    Http::fake(['*' => Http::response('{"meta":{"currentPage":1,"totalPages":1}}', 200)]);
+
+    $this->artisan('app:fetch-endpoints', ['--id' => $endpoint->id])->assertExitCode(0);
+
+    Http::assertSent(function ($request) {
+        $query = requestQuery($request);
+
+        return $query === ['status' => 'open', 'page' => '1', 'size' => '100'];
+    });
+})->with([
+    'missing' => [pagePagination()],
+    'null' => [pagePagination(['location' => null])],
+    'empty' => [pagePagination(['location' => ''])],
+]);
+
+test('an explicit query location keeps pagination in query and preserves the request body', function () {
+    $payload = ['filters' => ['status' => 'active']];
+    $endpoint = createPaginationEndpoint([
+        'metodo' => 'POST',
+        'payload' => json_encode($payload),
+        'pagination' => pagePagination(['location' => 'query']),
+    ]);
+    Http::fake(['*' => Http::response('{"meta":{"currentPage":1,"totalPages":1}}', 200)]);
+
+    $this->artisan('app:fetch-endpoints', ['--id' => $endpoint->id])->assertExitCode(0);
+
+    Http::assertSent(function ($request) use ($payload) {
+        $query = requestQuery($request);
+
+        return $query['page'] === '1'
+            && $query['size'] === '100'
+            && requestBody($request) === $payload;
+    });
+});
+
+test('a body location uses dot notation and preserves the base payload across pages', function () {
+    $payload = ['filters' => ['status' => 'active']];
+    $endpoint = createPaginationEndpoint([
+        'metodo' => 'POST',
+        'payload' => json_encode($payload),
+        'pagination' => pagePagination([
+            'location' => 'body',
+            'page_param' => 'pagination.page',
+            'page_size_param' => 'pagination.pageSize',
+        ]),
+    ]);
+    $requestBodies = [];
+    Http::fake(function ($request) use (&$requestBodies) {
+        $body = requestBody($request);
+        $requestBodies[] = $body;
+
+        return Http::response(json_encode([
+            'meta' => [
+                'currentPage' => $body['pagination']['page'],
+                'totalPages' => 2,
+            ],
+        ]), 200);
+    });
+
+    $this->artisan('app:fetch-endpoints', ['--id' => $endpoint->id])->assertExitCode(0);
+
+    expect($requestBodies)->toBe([
+        [
+            'filters' => ['status' => 'active'],
+            'pagination' => ['page' => 1, 'pageSize' => 100],
+        ],
+        [
+            'filters' => ['status' => 'active'],
+            'pagination' => ['page' => 2, 'pageSize' => 100],
+        ],
+    ]);
+    foreach (Http::recorded() as [$request]) {
+        expect(requestQuery($request))->toBe([]);
+    }
 });
 
 test('three pages make distinct requests and preserve each raw byte for byte', function () {

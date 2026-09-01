@@ -193,6 +193,12 @@ class FetchEndpoints extends Command
         string $format
     ): bool {
         $pagination = $endpoint->pagination;
+        $location = $pagination['location'] ?? 'query';
+        if ($location === null || (is_string($location) && trim($location) === '')) {
+            $location = 'query';
+        } elseif (is_string($location)) {
+            $location = strtolower(trim($location));
+        }
         $pageParam = $pagination['page_param'] ?? 'page';
         $pageStart = $this->paginationInteger($pagination['page_start'] ?? 1);
         $pageSizeParam = $pagination['page_size_param'] ?? 'size';
@@ -203,6 +209,7 @@ class FetchEndpoints extends Command
 
         if (
             !is_string($pageParam) || $pageParam === ''
+            || !in_array($location, ['query', 'body'], true)
             || !is_string($pageSizeParam) || $pageSizeParam === ''
             || $pageStart === null || $pageStart < 0
             || $pageSize === null || $pageSize < 1
@@ -224,12 +231,34 @@ class FetchEndpoints extends Command
                 return false;
             }
 
-            $params = $payload;
-            $params[$pageParam] = $requestedPage;
-            $params[$pageSizeParam] = $pageSize;
-
             try {
-                $response = $request->{$method}($endpoint->url, $params);
+                if ($location === 'body') {
+                    $params = $payload;
+                    data_set($params, $pageParam, $requestedPage);
+                    data_set($params, $pageSizeParam, $pageSize);
+
+                    $pageRequest = clone $request;
+                    $pageRequest->withBody(
+                        json_encode($params, JSON_THROW_ON_ERROR),
+                        'application/json'
+                    );
+                    $response = $pageRequest->{$method}($endpoint->url);
+                } else {
+                    $params = $payload;
+                    $params[$pageParam] = $requestedPage;
+                    $params[$pageSizeParam] = $pageSize;
+
+                    if (in_array($method, ['post', 'put', 'patch'], true)) {
+                        $pageRequest = clone $request;
+                        $pageRequest->withQueryParameters([
+                            $pageParam => $requestedPage,
+                            $pageSizeParam => $pageSize,
+                        ]);
+                        $response = $pageRequest->{$method}($endpoint->url, $payload);
+                    } else {
+                        $response = $request->{$method}($endpoint->url, $params);
+                    }
+                }
             } catch (\Exception $e) {
                 $this->error("   ❌ Erro crítico na página {$requestedPage}: " . $e->getMessage());
                 return false;
