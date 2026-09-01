@@ -24,12 +24,34 @@ class JsonToJson extends Command
             $clientCode = Str::slug($client->code ?: $client->name);
             $processos = CadProcesso::where('initial_format', 'JSON')
                 ->where('final_format', 'JSON')
+                ->where('active', true)
+                ->with(['inputEndpoint', 'outputEndpoint'])
                 ->get();
 
             foreach ($processos as $p) {
-                foreach ($origens as $origem) {
-                    $validatedPath = "{$origem}/{$clientCode}/json/incoming/{$p->name}/validated/";
-                    $outgoingPath  = "{$origem}/{$clientCode}/json/outgoing/{$p->name}/raw/";
+                $inputEndpoint = $p->inputEndpoint;
+                $outputEndpoint = $p->outputEndpoint;
+
+                if ($inputEndpoint && $inputEndpoint->client_id !== $client->id) {
+                    continue;
+                }
+
+                if (!$inputEndpoint && $outputEndpoint && $outputEndpoint->client_id !== $client->id) {
+                    continue;
+                }
+
+                if ($inputEndpoint && $outputEndpoint && $inputEndpoint->client_id !== $outputEndpoint->client_id) {
+                    $this->error("Endpoints de entrada e saída do processo {$p->name} pertencem a clientes diferentes.");
+                    continue;
+                }
+
+                $inputName = $inputEndpoint ? Str::slug($inputEndpoint->nome) : $p->name;
+                $outputName = $outputEndpoint ? Str::slug($outputEndpoint->nome) : $p->name;
+                $processOrigins = ($inputEndpoint || $outputEndpoint) ? ['polling'] : $origens;
+
+                foreach ($processOrigins as $origem) {
+                    $validatedPath = "{$origem}/{$clientCode}/json/incoming/{$inputName}/validated/";
+                    $outgoingPath  = "{$origem}/{$clientCode}/json/outgoing/{$outputName}/raw/";
 
                     Storage::disk('public')->makeDirectory($outgoingPath);
                     $files = Storage::disk('public')->files($validatedPath);
@@ -45,7 +67,12 @@ class JsonToJson extends Command
                         $jsonFinal = json_encode($outputArray, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
 
                         $filename = basename($filePath);
-                        Storage::disk('public')->put("{$outgoingPath}/{$filename}", $jsonFinal);
+                        $saved = Storage::disk('public')->put("{$outgoingPath}/{$filename}", $jsonFinal);
+
+                        if (!$saved) {
+                            $this->error("Falha ao salvar payload transformado: {$outgoingPath}/{$filename}");
+                            continue;
+                        }
 
                         // Atualiza Status e Move Arquivo (mesma lógica do seu JsonToXml)
                         $this->finalizarProcesso($filePath, $filename, $p->name);
@@ -68,10 +95,18 @@ class JsonToJson extends Command
         return $output;
     }
 
-    private function finalizarProcesso($oldPath, $newFilename, $interface) {
+    private function finalizarProcesso($oldPath, $newFilename, $interface): bool {
+        $targetPath = str_replace('/validated/', '/processed/', $oldPath);
+        Storage::disk('public')->makeDirectory(dirname($targetPath));
+
+        if (!Storage::disk('public')->move($oldPath, $targetPath)) {
+            $this->error("Falha ao mover arquivo processado: {$oldPath}");
+            return false;
+        }
+
         CadInterfaceStatus::where('int_arquivo', basename($oldPath))->update(['int_status' => 3]);
         // ... criar novo status para o arquivo de saída ...
-        $targetPath = str_replace('/validated/', '/processed/', $oldPath);
-        Storage::disk('public')->move($oldPath, $targetPath);
+
+        return true;
     }
 }

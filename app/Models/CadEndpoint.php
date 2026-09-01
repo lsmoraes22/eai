@@ -55,9 +55,14 @@ class CadEndpoint extends Model
         return $nextRun;
     }
 
-    public function processo()
+    public function inputProcesses()
     {
-        return $this->hasMany(CadProcesso::class);
+        return $this->hasMany(CadProcesso::class, 'input_endpoint_id');
+    }
+
+    public function outputProcesses()
+    {
+        return $this->hasMany(CadProcesso::class, 'output_endpoint_id');
     }
 
     public function client()

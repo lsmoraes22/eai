@@ -5,6 +5,7 @@ namespace App\Filament\Resources;
 use App\Filament\Resources\CadProcessoResource\Pages;
 use App\Filament\Resources\CadProcessoResource\RelationManagers;
 use App\Models\CadProcesso;
+use App\Models\CadEndpoint;
 use Filament\Forms;
 use Filament\Forms\Components\Section;
 use Filament\Forms\Components\TextInput;
@@ -35,6 +36,18 @@ class CadProcessoResource extends Resource
                     ->rules(['regex:/^[A-Za-z0-9_]+$/'])
                     ->helperText('Somente letras, números e underline.')
                     ->maxLength(100),
+		Select::make('input_endpoint_id')
+		    ->label('Endpoint de entrada')
+		    ->options(fn () => CadEndpoint::where('direcao', 'entrada')->pluck('nome', 'id'))
+		    ->searchable()
+		    ->preload()
+		    ->nullable(),
+		Select::make('output_endpoint_id')
+		    ->label('Endpoint de saída')
+		    ->options(fn () => CadEndpoint::where('direcao', 'saida')->pluck('nome', 'id'))
+		    ->searchable()
+		    ->preload()
+		    ->nullable(),
 	 	Select::make('initial_format')
                     ->label('Formato Inicial')
                     ->options([

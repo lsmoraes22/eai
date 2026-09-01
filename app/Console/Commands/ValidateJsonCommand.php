@@ -26,11 +26,12 @@ class ValidateJsonCommand extends Command
                 ->get();
 
             foreach ($endpoints as $ep) {
+                $endpointSlug = Str::slug($ep->nome);
                 // Diretórios (Seguindo seu padrão de XML)
-                $incomingPath  = "polling/{$clientCode}/json/incoming/{$ep->nome}/raw/";
-                $validatedPath = "polling/{$clientCode}/json/incoming/{$ep->nome}/validated/";
-                $refusedPath   = "polling/{$clientCode}/json/incoming/{$ep->nome}/refused/";
-                $schemaPath    = "polling/{$clientCode}/schema/{$ep->nome}.json";
+                $incomingPath  = "polling/{$clientCode}/json/incoming/{$endpointSlug}/raw/";
+                $validatedPath = "polling/{$clientCode}/json/incoming/{$endpointSlug}/validated/";
+                $refusedPath   = "polling/{$clientCode}/json/incoming/{$endpointSlug}/refused/";
+                $schemaPath    = "polling/{$clientCode}/schema/{$endpointSlug}.json";
 
                 Storage::disk('public')->makeDirectory($validatedPath);
                 Storage::disk('public')->makeDirectory($refusedPath);
