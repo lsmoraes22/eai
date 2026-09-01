@@ -42,6 +42,7 @@ class CadEndpointResource extends Resource
 			    ->label('Direção')
 			    ->searchable()
 			    ->required()
+			    ->live()
 			    ->options([
 				'entrada' => 'entrada',
 				'auth' => 'auth',
@@ -196,6 +197,57 @@ class CadEndpointResource extends Resource
 				'1440' => 'a cada dia'
                             ])
                             ->default('0'),
+                    ])
+                    ->columns(2),
+
+                Section::make('Paginação')
+                    ->description('Configuração genérica para APIs paginadas por página.')
+                    ->visible(fn ($get) => $get('direcao') !== 'auth')
+                    ->schema([
+                        Select::make('pagination.type')
+                            ->label('Tipo de paginação')
+                            ->options([
+                                'none' => 'Nenhuma',
+                                'page' => 'Página',
+                            ])
+                            ->default('none')
+                            ->live(),
+                        TextInput::make('pagination.page_param')
+                            ->label('Parâmetro da página')
+                            ->default('page')
+                            ->required(fn ($get) => $get('pagination.type') === 'page')
+                            ->visible(fn ($get) => $get('pagination.type') === 'page'),
+                        TextInput::make('pagination.page_start')
+                            ->label('Página inicial')
+                            ->numeric()
+                            ->default(1)
+                            ->required(fn ($get) => $get('pagination.type') === 'page')
+                            ->visible(fn ($get) => $get('pagination.type') === 'page'),
+                        TextInput::make('pagination.page_size_param')
+                            ->label('Parâmetro do tamanho')
+                            ->default('size')
+                            ->required(fn ($get) => $get('pagination.type') === 'page')
+                            ->visible(fn ($get) => $get('pagination.type') === 'page'),
+                        TextInput::make('pagination.page_size')
+                            ->label('Tamanho da página')
+                            ->numeric()
+                            ->default(100)
+                            ->required(fn ($get) => $get('pagination.type') === 'page')
+                            ->visible(fn ($get) => $get('pagination.type') === 'page'),
+                        TextInput::make('pagination.current_page_path')
+                            ->label('Caminho da página atual')
+                            ->required(fn ($get) => $get('pagination.type') === 'page')
+                            ->visible(fn ($get) => $get('pagination.type') === 'page'),
+                        TextInput::make('pagination.total_pages_path')
+                            ->label('Caminho do total de páginas')
+                            ->required(fn ($get) => $get('pagination.type') === 'page')
+                            ->visible(fn ($get) => $get('pagination.type') === 'page'),
+                        TextInput::make('pagination.max_pages')
+                            ->label('Máximo de páginas')
+                            ->numeric()
+                            ->default(100)
+                            ->required(fn ($get) => $get('pagination.type') === 'page')
+                            ->visible(fn ($get) => $get('pagination.type') === 'page'),
                     ])
                     ->columns(2),
             ]);

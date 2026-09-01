@@ -139,6 +139,28 @@ class FetchEndpoints extends Command
             $request->retry($attempts, 200);
 
             $payload = is_array($endpoint->payload) ? $endpoint->payload : json_decode($endpoint->payload, true);
+            $paginationType = strtolower($endpoint->pagination['type'] ?? 'none');
+
+            if ($paginationType === 'page') {
+                if (strtolower($endpoint->direcao) === 'auth') {
+                    $this->error('   ❌ Endpoints de autenticação não suportam paginação.');
+                    return false;
+                }
+
+                return $this->fetchPaginatedPages(
+                    $endpoint,
+                    $clientCode,
+                    $request,
+                    $method,
+                    $payload ?: [],
+                    $format
+                );
+            }
+
+            if (!in_array($paginationType, ['', 'none'], true)) {
+                $this->error("   ❌ Tipo de paginação não suportado: {$paginationType}.");
+                return false;
+            }
 
             // Determina se envia Body (Payload) ou Query Params
             if (in_array($method, ['post', 'put', 'patch'])) {
@@ -160,6 +182,114 @@ class FetchEndpoints extends Command
             $this->error("   ❌ Erro crítico na requisição: " . $e->getMessage());
             return false;
         }
+    }
+
+    private function fetchPaginatedPages(
+        CadEndpoint $endpoint,
+        string $clientCode,
+        $request,
+        string $method,
+        array $payload,
+        string $format
+    ): bool {
+        $pagination = $endpoint->pagination;
+        $pageParam = $pagination['page_param'] ?? 'page';
+        $pageStart = $this->paginationInteger($pagination['page_start'] ?? 1);
+        $pageSizeParam = $pagination['page_size_param'] ?? 'size';
+        $pageSize = $this->paginationInteger($pagination['page_size'] ?? 100);
+        $currentPagePath = $pagination['current_page_path'] ?? null;
+        $totalPagesPath = $pagination['total_pages_path'] ?? null;
+        $maxPages = $this->paginationInteger($pagination['max_pages'] ?? 100);
+
+        if (
+            !is_string($pageParam) || $pageParam === ''
+            || !is_string($pageSizeParam) || $pageSizeParam === ''
+            || $pageStart === null || $pageStart < 0
+            || $pageSize === null || $pageSize < 1
+            || $maxPages === null || $maxPages < 1
+            || !is_string($currentPagePath) || $currentPagePath === ''
+            || !is_string($totalPagesPath) || $totalPagesPath === ''
+        ) {
+            $this->error('   ❌ Configuração de paginação inválida ou incompleta.');
+            return false;
+        }
+
+        $requestedPage = $pageStart;
+        $pagesFetched = 0;
+        $executionBase = now()->format('YmdHisv');
+
+        while (true) {
+            if ($pagesFetched >= $maxPages) {
+                $this->error("   ❌ Limite de paginação atingido ({$maxPages} páginas).");
+                return false;
+            }
+
+            $params = $payload;
+            $params[$pageParam] = $requestedPage;
+            $params[$pageSizeParam] = $pageSize;
+
+            try {
+                $response = $request->{$method}($endpoint->url, $params);
+            } catch (\Exception $e) {
+                $this->error("   ❌ Erro crítico na página {$requestedPage}: " . $e->getMessage());
+                return false;
+            }
+
+            if (!$response->successful()) {
+                $this->error("   ❌ Falha HTTP [{$response->status()}] na página {$requestedPage} para {$endpoint->url}");
+                return false;
+            }
+
+            $filename = sprintf('%s-page-%06d.%s', $executionBase, $requestedPage, $format);
+            if (!$this->saveResponse($endpoint, $clientCode, $response, $format, $filename)) {
+                return false;
+            }
+
+            $decoded = json_decode($response->body(), true);
+            if (json_last_error() !== JSON_ERROR_NONE || !is_array($decoded)) {
+                $this->error("   ❌ Resposta da página {$requestedPage} não contém JSON válido para paginação.");
+                return false;
+            }
+
+            $current = $this->paginationInteger(data_get($decoded, $currentPagePath));
+            $total = $this->paginationInteger(data_get($decoded, $totalPagesPath));
+
+            if ($current === null || $total === null) {
+                $this->error("   ❌ Metadata de paginação ausente ou não numérica na página {$requestedPage}.");
+                return false;
+            }
+
+            if ($current < $pageStart || $total < $current || $current !== $requestedPage) {
+                $this->error("   ❌ Metadata de paginação incoerente na página {$requestedPage}.");
+                return false;
+            }
+
+            $pagesFetched++;
+
+            if ($current >= $total) {
+                return true;
+            }
+
+            if ($pagesFetched >= $maxPages) {
+                $this->error("   ❌ Limite de paginação atingido ({$maxPages} páginas).");
+                return false;
+            }
+
+            $requestedPage++;
+        }
+    }
+
+    private function paginationInteger($value): ?int
+    {
+        if (is_int($value)) {
+            return $value;
+        }
+
+        if (is_string($value) && preg_match('/^-?\d+$/', $value)) {
+            return (int) $value;
+        }
+
+        return null;
     }
 
     private function updateNextRun(CadEndpoint $endpoint, bool $success): void
@@ -269,7 +399,7 @@ class FetchEndpoints extends Command
         return trim((string) $token);
     }
 
-    private function saveResponse($endpoint, $clientCode, $response, $format): bool
+    private function saveResponse($endpoint, $clientCode, $response, $format, ?string $filename = null): bool
     {
         $endpointSlug = Str::slug($endpoint->nome);
         $endpointExt = Str::slug($endpoint->extensao ?: 'json');
@@ -288,7 +418,7 @@ class FetchEndpoints extends Command
 	    $directory = "token/{$clientCode}/{$endpointSlug}";
 	} else {
             // Define nome do arquivo
-            $filename = now()->format('YmdHisv') . '.' .  $format;
+            $filename ??= now()->format('YmdHisv') . '.' .  $format;
             $directory = "polling/{$clientCode}/{$endpointExt}/{$direcao}/{$endpointSlug}/raw";
 	}
         Storage::disk('public')->makeDirectory($directory);
