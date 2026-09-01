@@ -48,6 +48,20 @@ class CadProcessoResource extends Resource
 		    ->searchable()
 		    ->preload()
 		    ->nullable(),
+		Select::make('output_mode')
+		    ->label('Modo de saída')
+		    ->options([
+		        'single' => 'Single',
+		        'per_item' => 'Por item',
+		    ])
+		    ->default('single')
+		    ->live()
+		    ->nullable(),
+		TextInput::make('input_collection_path')
+		    ->label('Caminho da coleção de entrada')
+		    ->visible(fn ($get) => $get('output_mode') === 'per_item')
+		    ->required(fn ($get) => $get('output_mode') === 'per_item')
+		    ->helperText('O caminho localiza a coleção no documento de entrada. Os campos de origem do de-para serão avaliados relativamente a cada item da coleção.'),
 	 	Select::make('initial_format')
                     ->label('Formato Inicial')
                     ->options([

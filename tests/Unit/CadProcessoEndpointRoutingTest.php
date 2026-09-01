@@ -33,6 +33,32 @@ beforeEach(function () {
     });
 });
 
+test('collection output migration is nullable and reversible', function () {
+    $migration = require database_path('migrations/2026_09_01_030000_add_collection_output_to_cad_processos_table.php');
+    $migration->up();
+
+    expect(Schema::hasColumns('cad_processos', ['input_collection_path', 'output_mode']))->toBeTrue();
+
+    $process = CadProcesso::create([
+        'name' => 'legacy_collection',
+        'initial_format' => 'JSON',
+        'final_format' => 'JSON',
+        'active' => true,
+        'user_create_id' => 1,
+    ]);
+
+    expect($process->input_collection_path)->toBeNull()
+        ->and($process->output_mode)->toBeNull();
+
+    $process->update(['input_collection_path' => 'data.items', 'output_mode' => 'per_item']);
+    expect($process->refresh()->input_collection_path)->toBe('data.items')
+        ->and($process->output_mode)->toBe('per_item');
+
+    $migration->down();
+    expect(Schema::hasColumn('cad_processos', 'input_collection_path'))->toBeFalse()
+        ->and(Schema::hasColumn('cad_processos', 'output_mode'))->toBeFalse();
+});
+
 test('endpoint routing migration is nullable and reversible', function () {
     $migration = require database_path('migrations/2026_09_01_020000_add_endpoint_routing_to_cad_processos_table.php');
     $migration->up();
@@ -162,4 +188,29 @@ test('the process form offers nullable endpoints filtered by direction', functio
         ->and($fields['output_endpoint_id']->getOptions())->toBe([$output->id => 'output'])
         ->and($fields['input_endpoint_id']->getOptions())->not->toHaveKey($auth->id)
         ->and($fields['output_endpoint_id']->getOptions())->not->toHaveKey($auth->id);
+});
+
+test('the process form exposes conditional collection output settings', function () {
+    $livewire = new class extends Component implements HasForms
+    {
+        use InteractsWithForms;
+
+        public function render(): string
+        {
+            return '';
+        }
+    };
+    $form = CadProcessoResource::form(Form::make($livewire));
+    $form->fill(['output_mode' => 'per_item']);
+    $fields = $form->getFlatFields(withHidden: true, withAbsolutePathKeys: true);
+
+    expect($fields['output_mode']->getOptions())->toBe([
+        'single' => 'Single',
+        'per_item' => 'Por item',
+    ])->and($fields['input_collection_path']->isVisible())->toBeTrue()
+        ->and($fields['input_collection_path']->isRequired())->toBeTrue();
+
+    $form->fill(['output_mode' => 'single']);
+    expect($fields['input_collection_path']->isVisible())->toBeFalse()
+        ->and($fields['input_collection_path']->isRequired())->toBeFalse();
 });

@@ -82,6 +82,8 @@ beforeEach(function () {
         $table->id();
         $table->foreignId('input_endpoint_id')->nullable();
         $table->foreignId('output_endpoint_id')->nullable();
+        $table->string('input_collection_path')->nullable();
+        $table->string('output_mode')->nullable();
         $table->string('name');
         $table->string('initial_format');
         $table->string('final_format');
@@ -141,9 +143,34 @@ test('explicit endpoints route different names through normalized slugs to the s
     Storage::disk('public')->assertExists(str_replace('/validated/', '/processed/', $input));
 });
 
+test('an explicit single output mode preserves the original filename and one to one behavior', function () {
+    $client = routingClient(['code' => 'single-client']);
+    $inputEndpoint = routingEndpoint($client, ['nome' => 'single_input', 'direcao' => 'entrada']);
+    $outputEndpoint = routingEndpoint($client, ['nome' => 'single output', 'direcao' => 'saida']);
+    routingProcess([
+        'name' => 'different_process_name',
+        'input_endpoint_id' => $inputEndpoint->id,
+        'output_endpoint_id' => $outputEndpoint->id,
+        'output_mode' => 'single',
+    ]);
+    $input = putValidatedJson($client, 'single-input', 'original-name.json');
+
+    $this->artisan('app:convert-json-json')->assertExitCode(0);
+
+    Storage::disk('public')->assertExists(
+        'polling/single-client/json/outgoing/single-output/raw/original-name.json'
+    );
+    Storage::disk('public')->assertExists(str_replace('/validated/', '/processed/', $input));
+});
+
 test('an inactive json process is not processed', function () {
     $client = routingClient();
-    routingProcess(['name' => 'inactive_process', 'active' => false]);
+    routingProcess([
+        'name' => 'inactive_process',
+        'active' => false,
+        'output_mode' => 'per_item',
+        'input_collection_path' => 'data',
+    ]);
     $input = putValidatedJson($client, 'inactive_process');
 
     $this->artisan('app:convert-json-json')->assertExitCode(0);

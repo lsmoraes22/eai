@@ -10,6 +10,8 @@ class CadProcesso extends Model
 	'name',
 	'input_endpoint_id',
 	'output_endpoint_id',
+	'input_collection_path',
+	'output_mode',
 	'initial_format',
 	'final_format',
 	'user_create_id',
