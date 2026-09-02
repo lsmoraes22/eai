@@ -243,6 +243,10 @@ test('json validation uses the same slug as fetch endpoints', function () {
     routingEndpoint($client, ['nome' => 'algar_faturas', 'direcao' => 'entrada']);
     $raw = 'polling/customer/json/incoming/algar-faturas/raw/page-000001.json';
     Storage::disk('public')->put($raw, '{"source":"value"}');
+    Storage::disk('public')->put(
+        'polling/customer/schema/algar-faturas.json',
+        '{"$schema":"http://json-schema.org/draft-06/schema#","type":"object"}'
+    );
 
     $this->artisan('app:validate-json')->assertExitCode(0);
 

@@ -52,7 +52,7 @@ class JsonSchemaResource extends Resource //implements HasShieldPermissions
                             ->acceptedFileTypes(['application/json', 'text/plain'])
                             ->required()
                             // Dica: Adicione o helper para lembrar o usuário do formato
-                            ->helperText('O arquivo deve seguir a especificação JSON Schema (draft-07 ou superior).'),
+                            ->helperText('O arquivo deve seguir a especificação JSON Schema Draft 6.'),
                     ])->columns(2),
             ]);
     }

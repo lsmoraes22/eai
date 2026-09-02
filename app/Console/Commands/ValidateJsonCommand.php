@@ -3,6 +3,7 @@
 namespace App\Console\Commands;
 
 use Illuminate\Console\Command;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
 use App\Models\Client;
@@ -12,6 +13,9 @@ use JsonSchema\Validator;
 
 class ValidateJsonCommand extends Command
 {
+    // A região crítica protege somente a transição de um arquivo no Storage.
+    private const TARGET_LOCK_TTL_SECONDS = 60;
+
     protected $signature = 'app:validate-json';
     protected $description = 'Valida os JSONs usando JSON Schema';
 
@@ -37,20 +41,60 @@ class ValidateJsonCommand extends Command
                 Storage::disk('public')->makeDirectory($refusedPath);
 
                 $files = Storage::disk('public')->files($incomingPath);
-                foreach ($files as $file) {
-                    $jsonContent = json_decode(Storage::disk('public')->get($file));
 
-                    // Se o arquivo estiver mal formatado (Sintaxe)
-                    if (json_last_error() !== JSON_ERROR_NONE) {
-                        $this->handleRefusal($file, $refusedPath, "Erro de sintaxe JSON");
+                if ($files === []) {
+                    continue;
+                }
+
+                try {
+                    if (!Storage::disk('public')->exists($schemaPath)) {
+                        $this->error("Schema ausente para o endpoint {$ep->nome}. Esperado: {$schemaPath}");
+                        continue;
+                    }
+
+                    $schema = json_decode(
+                        Storage::disk('public')->get($schemaPath),
+                        false,
+                        512,
+                        JSON_THROW_ON_ERROR
+                    );
+                } catch (\JsonException $e) {
+                    $this->error("Schema JSON inválido para o endpoint {$ep->nome} em {$schemaPath}: {$e->getMessage()}");
+                    continue;
+                } catch (\Throwable $e) {
+                    // Boundary por endpoint: falhas operacionais ao ler o schema não
+                    // podem interromper a validação dos demais endpoints.
+                    $this->error("Falha ao carregar schema para o endpoint {$ep->nome} em {$schemaPath}: {$e->getMessage()}");
+                    continue;
+                }
+
+                foreach ($files as $file) {
+                    try {
+                        $jsonContent = json_decode(
+                            Storage::disk('public')->get($file),
+                            false,
+                            512,
+                            JSON_THROW_ON_ERROR
+                        );
+                    } catch (\JsonException $e) {
+                        $this->handleRefusal($file, $refusedPath, 'Erro de sintaxe JSON');
+                        continue;
+                    } catch (\Throwable $e) {
+                        // Boundary por arquivo para isolar falhas do Storage.
+                        $this->error('Falha ao ler JSON ' . basename($file) . ': ' . $e->getMessage());
                         continue;
                     }
 
                     // Validação Estrutural (Schema)
                     $validator = new Validator();
-                    if (Storage::disk('public')->exists($schemaPath)) {
-                        $schema = json_decode(Storage::disk('public')->get($schemaPath));
+
+                    try {
                         $validator->validate($jsonContent, $schema);
+                    } catch (\Throwable $e) {
+                        // A biblioteca pode lançar tanto exceções próprias quanto SPL
+                        // para schemas inválidos; o boundary mantém o RAW reprocessável.
+                        $this->error('Falha no schema ao validar ' . basename($file) . ': ' . $e->getMessage());
+                        continue;
                     }
 
                     if ($validator->isValid()) {
@@ -67,17 +111,72 @@ class ValidateJsonCommand extends Command
         }
     }
 
-    private function handleSuccess($file, $path) {
-        $filename = basename($file);
-        Storage::disk('public')->move($file, $path . $filename);
-        CadInterfaceStatus::where('int_arquivo', $filename)->update(['int_status' => 1, 'int_mensagem' => 'OK']);
-        $this->info("✔ JSON VALIDADO: {$filename}");
+    private function handleSuccess($file, $path): bool
+    {
+        return $this->moveAndUpdateStatus(
+            $file,
+            $path,
+            1,
+            'OK',
+            '✔ JSON VALIDADO'
+        );
     }
 
-    private function handleRefusal($file, $path, $msg) {
+    private function handleRefusal($file, $path, $msg): bool
+    {
+        return $this->moveAndUpdateStatus(
+            $file,
+            $path,
+            2,
+            $msg,
+            '❌ JSON RECUSADO'
+        );
+    }
+
+    private function moveAndUpdateStatus(string $file, string $path, int $status, string $message, string $label): bool
+    {
         $filename = basename($file);
-        Storage::disk('public')->move($file, $path . $filename);
-        CadInterfaceStatus::where('int_arquivo', $filename)->update(['int_status' => 2, 'int_mensagem' => $msg]);
-        $this->error("❌ JSON RECUSADO: {$filename} - {$msg}");
+        $target = $path . $filename;
+        $lock = Cache::lock(
+            'eai:validate-target:' . hash('sha256', $target),
+            self::TARGET_LOCK_TTL_SECONDS
+        );
+
+        if (!$lock->get()) {
+            $this->error("Falha ao mover {$filename}: destino em processamento ({$target})");
+            return false;
+        }
+
+        try {
+            if (Storage::disk('public')->exists($target)) {
+                $this->error("Falha ao mover {$filename}: destino já existe ({$target})");
+                return false;
+            }
+
+            if (!Storage::disk('public')->move($file, $target)) {
+                $this->error("Falha ao mover {$filename} para {$target}");
+                return false;
+            }
+
+            CadInterfaceStatus::where('int_arquivo', $filename)->update([
+                'int_status' => $status,
+                'int_mensagem' => $message,
+            ]);
+
+            if ($status === 1) {
+                $this->info("{$label}: {$filename}");
+            } else {
+                $this->error("{$label}: {$filename} - {$message}");
+            }
+
+            return true;
+        } catch (\Throwable $e) {
+            // Boundary da transição: uma falha de Storage não bloqueia os demais
+            // arquivos e nunca atualiza status antes de um move confirmado.
+            $this->error("Falha ao mover {$filename} para {$target}: {$e->getMessage()}");
+            return false;
+        } finally {
+            $lock->release();
+        }
     }
 }
