@@ -8,7 +8,10 @@ Route::get('/', function () {
     return view('welcome');
 });
 
-Route::get('token/{id}', [OAuthController::class, 'token'])->name('oauth.callback');
+Route::get('oauth/{client}/authorize', [OAuthController::class, 'authorizeClient'])
+    ->middleware('auth')->block(60, 10)->name('oauth.authorize');
+Route::get('token/{id}', [OAuthController::class, 'token'])
+    ->middleware('auth')->block(60, 10)->name('oauth.callback');
 Route::post('webhook/{client_id}/{interface}', [WebhookController::class, 'handle']);
 
 Route::get('/dashboard', function () {

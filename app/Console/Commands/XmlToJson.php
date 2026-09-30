@@ -45,13 +45,13 @@ class XmlToJson extends Command
 				->get();
 
 	                // Garantir que existam
-	                Storage::disk('public')->makeDirectory($validatedPath);
-	                Storage::disk('public')->makeDirectory($outgoingPath);
+	                Storage::disk('integrations')->makeDirectory($validatedPath);
+	                Storage::disk('integrations')->makeDirectory($outgoingPath);
 
 			// Arquivos XML validados
-	                $files = Storage::disk('public')->files($validatedPath);
+	                $files = Storage::disk('integrations')->files($validatedPath);
 	                foreach ($files as $filePath) {
-			    $xmlContent = Storage::disk('public')->get($filePath);
+			    $xmlContent = Storage::disk('integrations')->get($filePath);
 	                    $xmlContent = $xmlService->sanitize($xmlContent);
 			    $xmlContent = $xmlService->extractXmlFromSoap($xmlContent);
 			    $xmlArray = $this->xmlToArray($xmlContent);
@@ -76,10 +76,10 @@ class XmlToJson extends Command
 	                    ]);
 
 	                    // Gravar no outgoing/raw
-	                    Storage::disk('public')->put("{$outgoingPath}/{$filename}", $json);
+	                    Storage::disk('integrations')->put("{$outgoingPath}/{$filename}", $json);
 			    $processedPath = str_replace('/validated/', '/processed/', $filePath);
 	                    // Mover o XML original para processed/success
-	                    Storage::disk('public')->move($filePath, $processedPath);
+	                    Storage::disk('integrations')->move($filePath, $processedPath);
 
 	                    $this->info("Convertido: {$filePath} → {$outgoingPath}/{$filename}");
 	                }

@@ -12,7 +12,7 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 use Livewire\Component;
 
-uses(Tests\TestCase::class);
+uses(Tests\UnitTestCase::class);
 
 beforeEach(function () {
     Schema::enableForeignKeyConstraints();

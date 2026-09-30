@@ -11,7 +11,7 @@ use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Facades\Storage;
 
-uses(Tests\TestCase::class);
+uses(Tests\UnitTestCase::class);
 
 function createConcurrencyEndpoint(array $overrides = []): CadEndpoint
 {
@@ -43,7 +43,7 @@ beforeEach(function () {
     config(['cache.default' => 'array']);
     Cache::setDefaultDriver('array');
     Cache::flush();
-    Storage::fake('public');
+    Storage::fake('integrations');
 
     Schema::create('clients', function (Blueprint $table) {
         $table->id();
@@ -182,7 +182,7 @@ test('a successful execution persists raw and advances next_run to the next alig
 
     expect($endpoint->refresh()->next_run->toDateTimeString())->toBe('2026-08-30 16:30:00');
     Http::assertSentCount(1);
-    expect(Storage::disk('public')->files(
+    expect(Storage::disk('integrations')->files(
         "polling/{$endpoint->client->code}/json/incoming/{$endpoint->nome}/raw"
     ))->toHaveCount(1);
 });
@@ -252,7 +252,7 @@ test('a storage failure does not report saved and schedules a retry', function (
     $disk = Mockery::mock();
     $disk->shouldReceive('makeDirectory')->once()->andReturnTrue();
     $disk->shouldReceive('put')->once()->andReturnFalse();
-    Storage::shouldReceive('disk')->with('public')->andReturn($disk);
+    Storage::shouldReceive('disk')->with('integrations')->andReturn($disk);
 
     $this->artisan('app:fetch-endpoints', ['--id' => $endpoint->id])
         ->doesntExpectOutputToContain('Salvo:')
@@ -275,7 +275,7 @@ test('a successful auth endpoint write uses the normal aligned schedule', functi
 
     $this->artisan('app:fetch-endpoints', ['--id' => $endpoint->id])->assertExitCode(0);
 
-    expect(Storage::disk('public')->get(
+    expect(Storage::disk('integrations')->get(
         "token/{$endpoint->client->code}/auth-token/auth.txt"
     ))->toBe($body)
         ->and($endpoint->refresh()->next_run->toDateTimeString())->toBe('2026-08-30 16:30:00');

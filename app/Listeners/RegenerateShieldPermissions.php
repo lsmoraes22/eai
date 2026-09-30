@@ -24,7 +24,9 @@ class RegenerateShieldPermissions
 	// Regenera permissões do Filament Shield
         Artisan::call('shield:generate', [
             '--all' => true,
-            '--force' => true,
+            '--panel' => 'admin',
+            '--option' => 'permissions',
+            '--no-interaction' => true,
         ]);
     }
 }

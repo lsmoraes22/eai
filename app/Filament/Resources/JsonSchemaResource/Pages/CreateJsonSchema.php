@@ -20,7 +20,7 @@ class CreateJsonSchema extends CreateRecord
     	$finalPath = "polling/{$clientCode}/schema/{$filename}";
 
     	// Move o arquivo para o local definitivo do pipeline
-    	\Illuminate\Support\Facades\Storage::disk('public')->move($tempPath, $finalPath);
+        \Illuminate\Support\Facades\Storage::disk('integrations')->move($tempPath, $finalPath);
 
     	$data['path'] = $finalPath;
     	$data['filename'] = $filename;
@@ -37,8 +37,8 @@ class CreateJsonSchema extends CreateRecord
     	$filename = basename($tempPath);
     	$finalPath = "polling/{$clientCode}/schema/{$filename}";
 
-    	if (\Illuminate\Support\Facades\Storage::disk('public')->exists($tempPath)) {
-    	    \Illuminate\Support\Facades\Storage::disk('public')->move($tempPath, $finalPath);
+        if (\Illuminate\Support\Facades\Storage::disk('integrations')->exists($tempPath)) {
+            \Illuminate\Support\Facades\Storage::disk('integrations')->move($tempPath, $finalPath);
     	}
 
     	$data['path'] = $finalPath;

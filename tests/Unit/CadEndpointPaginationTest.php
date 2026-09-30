@@ -11,7 +11,7 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 use Livewire\Component;
 
-uses(Tests\TestCase::class);
+uses(Tests\UnitTestCase::class);
 
 test('pagination migration adds a nullable json column and is reversible', function () {
     Schema::create('cad_endpoints', function (Blueprint $table) {

@@ -37,23 +37,23 @@ class ValidateJsonCommand extends Command
                 $refusedPath   = "polling/{$clientCode}/json/incoming/{$endpointSlug}/refused/";
                 $schemaPath    = "polling/{$clientCode}/schema/{$endpointSlug}.json";
 
-                Storage::disk('public')->makeDirectory($validatedPath);
-                Storage::disk('public')->makeDirectory($refusedPath);
+                Storage::disk('integrations')->makeDirectory($validatedPath);
+                Storage::disk('integrations')->makeDirectory($refusedPath);
 
-                $files = Storage::disk('public')->files($incomingPath);
+                $files = Storage::disk('integrations')->files($incomingPath);
 
                 if ($files === []) {
                     continue;
                 }
 
                 try {
-                    if (!Storage::disk('public')->exists($schemaPath)) {
+                    if (!Storage::disk('integrations')->exists($schemaPath)) {
                         $this->error("Schema ausente para o endpoint {$ep->nome}. Esperado: {$schemaPath}");
                         continue;
                     }
 
                     $schema = json_decode(
-                        Storage::disk('public')->get($schemaPath),
+                        Storage::disk('integrations')->get($schemaPath),
                         false,
                         512,
                         JSON_THROW_ON_ERROR
@@ -71,7 +71,7 @@ class ValidateJsonCommand extends Command
                 foreach ($files as $file) {
                     try {
                         $jsonContent = json_decode(
-                            Storage::disk('public')->get($file),
+                            Storage::disk('integrations')->get($file),
                             false,
                             512,
                             JSON_THROW_ON_ERROR
@@ -148,12 +148,12 @@ class ValidateJsonCommand extends Command
         }
 
         try {
-            if (Storage::disk('public')->exists($target)) {
+            if (Storage::disk('integrations')->exists($target)) {
                 $this->error("Falha ao mover {$filename}: destino já existe ({$target})");
                 return false;
             }
 
-            if (!Storage::disk('public')->move($file, $target)) {
+            if (!Storage::disk('integrations')->move($file, $target)) {
                 $this->error("Falha ao mover {$filename} para {$target}");
                 return false;
             }

@@ -156,24 +156,7 @@ class ClientResource extends Resource
 		->label('Vincular Conta API')
 		->icon('heroicon-o-key')
 		->color('info')
-		->url(function (Client $record) {
-		    // Se não houver URL de autorização ou Client ID, o botão não funciona corretamente
-		    if (!$record->auth_url || !$record->app_client_id) {
-			return null;
-		    }
-
-                   // Monta os parâmetros padrão do OAuth2
-                    $params = [
-                        'response_type' => 'code',
-                        'client_id'     => $record->app_client_id,
-                        'redirect_uri'  => route('oauth.callback', ['id' => $record->id]),
-                        'state'         => bin2hex(random_bytes(16)), // State para segurança
-                        // 'scope'      => $record->scope, // Se você decidir adicionar uma coluna de scope no futuro
-                    ];
-
-                    // Retorna a URL completa: https://provedor.com/authorize?client_id=...&redirect_uri=...
-                    return $record->auth_url . '?' . http_build_query($params);
-                })
+		->url(fn (Client $record) => route('oauth.authorize', ['client' => $record]))
                 ->openUrlInNewTab()
                 // O botão só aparece se os dados mínimos de configuração existirem
                 ->visible(fn (Client $record) => $record->auth_url && $record->app_client_id),

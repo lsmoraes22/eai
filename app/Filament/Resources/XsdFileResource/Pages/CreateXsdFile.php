@@ -16,7 +16,7 @@ class CreateXsdFile extends CreateRecord
         $record = $this->record;
 
         // Caminho temporário completo
-        $tempPath = storage_path('app/public/' . $record->temp_file);
+        $tempPath = Storage::disk('integrations')->path($record->temp_file);
 
         if (!file_exists($tempPath)) {
             // Se não existir, podemos logar ou lançar exceção
@@ -29,9 +29,9 @@ class CreateXsdFile extends CreateRecord
         $clientCode = Str::slug($client->code ?: $client->name);
 
         // Diretório final
-        $finalDir = storage_path("app/public/polling/{$clientCode}/xsd");
+        $finalDir = Storage::disk('integrations')->path("polling/{$clientCode}/xsd");
         if (!is_dir($finalDir)) {
-            mkdir($finalDir, 0777, true);
+            mkdir($finalDir, 0700, true);
         }
 
         // Nome final

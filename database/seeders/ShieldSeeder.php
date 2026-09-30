@@ -12,13 +12,29 @@ class ShieldSeeder extends Seeder
     {
         app()[PermissionRegistrar::class]->forgetCachedPermissions();
 
-        $rolesWithPermissions = '[{"name":"admin","guard_name":"web","permissions":["view users","edit users","delete users","view roles","edit roles"]},{"name":"user","guard_name":"web","permissions":[]},{"name":"super_admin","guard_name":"web","permissions":[]}]';
+        $this->callPermissionsGenerator();
+
+        $rolesWithPermissions = '[{"name":"admin","guard_name":"web","permissions":["view_any_user","view_user","update_user","delete_user","view_any_role","view_role","update_role"]},{"name":"user","guard_name":"web","permissions":[]},{"name":"super_admin","guard_name":"web","permissions":[]}]';
         $directPermissions = '[]';
 
         static::makeRolesWithPermissions($rolesWithPermissions);
         static::makeDirectPermissions($directPermissions);
 
         $this->command->info('Shield Seeding Completed.');
+    }
+
+    private function callPermissionsGenerator(): void
+    {
+        // Generate database permissions only; never regenerate checked-in policies.
+        $exitCode = $this->command->call('shield:generate', [
+            '--all' => true,
+            '--panel' => 'admin',
+            '--option' => 'permissions',
+            '--no-interaction' => true,
+        ]);
+        if ($exitCode !== 0) {
+            throw new \RuntimeException('Permission generation failed.');
+        }
     }
 
     protected static function makeRolesWithPermissions(string $rolesWithPermissions): void
@@ -43,7 +59,7 @@ class ShieldSeeder extends Seeder
                         ]))
                         ->all();
 
-                    $role->syncPermissions($permissionModels);
+                    $role->givePermissionTo($permissionModels);
                 }
             }
         }

@@ -11,7 +11,7 @@ use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Facades\Storage;
 
-uses(Tests\TestCase::class);
+uses(Tests\UnitTestCase::class);
 
 function collectionClient(string $code = 'collection-client'): Client
 {
@@ -62,7 +62,7 @@ function collectionProcess(CadEndpoint $input, CadEndpoint $output, array $overr
 function collectionInput(Client $client, string $endpointSlug, string $filename, string $content): string
 {
     $path = "polling/{$client->code}/json/incoming/{$endpointSlug}/validated/{$filename}";
-    Storage::disk('public')->put($path, $content);
+    Storage::disk('integrations')->put($path, $content);
 
     return $path;
 }
@@ -78,7 +78,7 @@ function collectionContext(array $processOverrides = []): array
 }
 
 beforeEach(function () {
-    Storage::fake('public');
+    Storage::fake('integrations');
     Cache::flush();
 
     Schema::create('clients', function (Blueprint $table) {
@@ -150,11 +150,11 @@ test('per item transforms one item relative to the item and preserves nested out
     $this->artisan('app:convert-json-json')->assertExitCode(0);
 
     $output = 'polling/collection-client/json/outgoing/destination-items/raw/page-000001-item-000001.json';
-    Storage::disk('public')->assertExists($output);
-    expect(json_decode(Storage::disk('public')->get($output), true))->toBe([
+    Storage::disk('integrations')->assertExists($output);
+    expect(json_decode(Storage::disk('integrations')->get($output), true))->toBe([
         'account' => ['customerId' => 'A'],
     ]);
-    Storage::disk('public')->assertExists(str_replace('/validated/', '/processed/', $input));
+    Storage::disk('integrations')->assertExists(str_replace('/validated/', '/processed/', $input));
 
     $lockKey = 'eai:transform-item:' . hash('sha256', "{$process->id}|{$input}");
     $lock = Cache::lock($lockKey, 600);
@@ -179,7 +179,7 @@ test('per item creates deterministic zero padded names for every item of a pagin
     $this->artisan('app:convert-json-json')->assertExitCode(0);
 
     $raw = 'polling/collection-client/json/outgoing/destination-items/raw';
-    expect(Storage::disk('public')->files($raw))->toBe([
+    expect(Storage::disk('integrations')->files($raw))->toBe([
         "{$raw}/20260901163000123-page-000001-item-000001.json",
         "{$raw}/20260901163000123-page-000001-item-000002.json",
     ]);
@@ -192,10 +192,10 @@ test('an empty collection succeeds with no outputs and processes the input', fun
 
     $this->artisan('app:convert-json-json')->assertExitCode(0);
 
-    Storage::disk('public')->assertDirectoryEmpty(
+    Storage::disk('integrations')->assertDirectoryEmpty(
         'polling/collection-client/json/outgoing/destination-items/raw'
     );
-    Storage::disk('public')->assertExists(str_replace('/validated/', '/processed/', $input));
+    Storage::disk('integrations')->assertExists(str_replace('/validated/', '/processed/', $input));
     expect($status->refresh()->int_status)->toBe(3);
 });
 
@@ -212,8 +212,8 @@ test('invalid collection inputs fail without output move or status advancement',
         ->expectsOutputToContain($message)
         ->assertExitCode(0);
 
-    Storage::disk('public')->assertExists($input);
-    Storage::disk('public')->assertDirectoryEmpty(
+    Storage::disk('integrations')->assertExists($input);
+    Storage::disk('integrations')->assertDirectoryEmpty(
         'polling/collection-client/json/outgoing/destination-items/raw'
     );
     expect($status->refresh()->int_status)->toBe(1);
@@ -236,11 +236,11 @@ test('an invalid output mode fails safely before transformation or staging', fun
         ->expectsOutputToContain('Modo de saída inválido')
         ->assertExitCode(0);
 
-    Storage::disk('public')->assertExists($input);
-    Storage::disk('public')->assertDirectoryEmpty(
+    Storage::disk('integrations')->assertExists($input);
+    Storage::disk('integrations')->assertDirectoryEmpty(
         'polling/collection-client/json/outgoing/destination-items/raw'
     );
-    Storage::disk('public')->assertMissing(
+    Storage::disk('integrations')->assertMissing(
         'polling/collection-client/json/outgoing/destination-items/staging'
     );
     expect($status->refresh()->int_status)->toBe(1);
@@ -256,10 +256,10 @@ test('an invalid output mode fails safely before transformation or staging', fun
 test('a failure on the first staging write publishes nothing and releases the input lock', function () {
     [$client, , , $process] = collectionContext();
     $input = collectionInput($client, 'source-items', 'first-failure.json', '{"data":[{"customer":{"id":"A"}}]}');
-    $realDisk = Storage::disk('public');
+    $realDisk = Storage::disk('integrations');
     $disk = Mockery::mock($realDisk);
     $disk->shouldReceive('put')->once()->andReturnFalse();
-    Storage::shouldReceive('disk')->with('public')->andReturn($disk);
+    Storage::shouldReceive('disk')->with('integrations')->andReturn($disk);
 
     $this->artisan('app:convert-json-json')
         ->expectsOutputToContain('Falha ao salvar payload em staging')
@@ -281,10 +281,10 @@ test('an intermediate staging write failure cleans staging and publishes no part
         'middle-failure.json',
         '{"data":[{"customer":{"id":"A"}},{"customer":{"id":"B"}}]}'
     );
-    $realDisk = Storage::disk('public');
+    $realDisk = Storage::disk('integrations');
     $disk = Mockery::mock($realDisk);
     $disk->shouldReceive('put')->twice()->andReturn(true, false);
-    Storage::shouldReceive('disk')->with('public')->andReturn($disk);
+    Storage::shouldReceive('disk')->with('integrations')->andReturn($disk);
 
     $this->artisan('app:convert-json-json')->assertExitCode(0);
 
@@ -297,10 +297,10 @@ test('a publication failure leaves input and status pending without deleting fin
     [$client] = collectionContext();
     $input = collectionInput($client, 'source-items', 'publish-failure.json', '{"data":[{"customer":{"id":"A"}}]}');
     $status = CadInterfaceStatus::create(['int_arquivo' => 'publish-failure.json', 'int_status' => 1]);
-    $realDisk = Storage::disk('public');
+    $realDisk = Storage::disk('integrations');
     $disk = Mockery::mock($realDisk);
     $disk->shouldReceive('move')->once()->andReturnFalse();
-    Storage::shouldReceive('disk')->with('public')->andReturn($disk);
+    Storage::shouldReceive('disk')->with('integrations')->andReturn($disk);
 
     $this->artisan('app:convert-json-json')
         ->expectsOutputToContain('Falha ao publicar payload')
@@ -323,7 +323,7 @@ test('the input moves only after every staged output is published', function () 
         'ordered.json',
         '{"data":[{"customer":{"id":"A"}},{"customer":{"id":"B"}}]}'
     );
-    $realDisk = Storage::disk('public');
+    $realDisk = Storage::disk('integrations');
     $disk = Mockery::mock($realDisk);
     $disk->shouldReceive('move')->withArgs(fn ($from, $to) => str_contains($from, '/staging/') && str_ends_with($to, 'item-000001.json'))
         ->once()->ordered()->andReturnUsing(fn ($from, $to) => $realDisk->move($from, $to));
@@ -331,7 +331,7 @@ test('the input moves only after every staged output is published', function () 
         ->once()->ordered()->andReturnUsing(fn ($from, $to) => $realDisk->move($from, $to));
     $disk->shouldReceive('move')->with($input, str_replace('/validated/', '/processed/', $input))
         ->once()->ordered()->andReturnUsing(fn ($from, $to) => $realDisk->move($from, $to));
-    Storage::shouldReceive('disk')->with('public')->andReturn($disk);
+    Storage::shouldReceive('disk')->with('integrations')->andReturn($disk);
 
     $this->artisan('app:convert-json-json')->assertExitCode(0);
 
@@ -355,12 +355,12 @@ test('an occupied input lock skips all effects while another input remains indep
         $heldLock->release();
     }
 
-    Storage::disk('public')->assertExists($lockedInput);
-    Storage::disk('public')->assertExists(str_replace('/validated/', '/processed/', $freeInput));
-    Storage::disk('public')->assertMissing(
+    Storage::disk('integrations')->assertExists($lockedInput);
+    Storage::disk('integrations')->assertExists(str_replace('/validated/', '/processed/', $freeInput));
+    Storage::disk('integrations')->assertMissing(
         'polling/collection-client/json/outgoing/destination-items/raw/locked-item-000001.json'
     );
-    Storage::disk('public')->assertExists(
+    Storage::disk('integrations')->assertExists(
         'polling/collection-client/json/outgoing/destination-items/raw/free-item-000001.json'
     );
     expect($status->refresh()->int_status)->toBe(1);
@@ -383,24 +383,24 @@ test('the transform lock key differentiates processes for the same input path', 
         $heldLock->release();
     }
 
-    Storage::disk('public')->assertExists(
+    Storage::disk('integrations')->assertExists(
         'polling/collection-client/json/outgoing/destination-items/raw/shared-item-000001.json'
     );
-    Storage::disk('public')->assertExists(str_replace('/validated/', '/processed/', $input));
+    Storage::disk('integrations')->assertExists(str_replace('/validated/', '/processed/', $input));
 });
 
 test('a conflicting preexisting final output is preserved and the input stays pending', function () {
     [$client] = collectionContext();
     $input = collectionInput($client, 'source-items', 'conflict.json', '{"data":[{"customer":{"id":"A"}}]}');
     $target = 'polling/collection-client/json/outgoing/destination-items/raw/conflict-item-000001.json';
-    Storage::disk('public')->put($target, '{"preexisting":true}');
+    Storage::disk('integrations')->put($target, '{"preexisting":true}');
 
     $this->artisan('app:convert-json-json')
         ->expectsOutputToContain('já existe com conteúdo diferente')
         ->assertExitCode(0);
 
-    Storage::disk('public')->assertExists($input);
-    expect(Storage::disk('public')->get($target))->toBe('{"preexisting":true}');
+    Storage::disk('integrations')->assertExists($input);
+    expect(Storage::disk('integrations')->get($target))->toBe('{"preexisting":true}');
 
     $targetLock = Cache::lock('eai:transform-target:' . hash('sha256', $target), 60);
     expect($targetLock->get())->toBeTrue();
@@ -415,14 +415,14 @@ test('an identical preexisting target is accepted without being overwritten', fu
         ['account' => ['customerId' => 'A']],
         JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR
     );
-    Storage::disk('public')->put($target, $content);
-    $realDisk = Storage::disk('public');
+    Storage::disk('integrations')->put($target, $content);
+    $realDisk = Storage::disk('integrations');
     $disk = Mockery::mock($realDisk);
     $disk->shouldReceive('move')
         ->once()
         ->with($input, str_replace('/validated/', '/processed/', $input))
         ->andReturnUsing(fn ($from, $to) => $realDisk->move($from, $to));
-    Storage::shouldReceive('disk')->with('public')->andReturn($disk);
+    Storage::shouldReceive('disk')->with('integrations')->andReturn($disk);
 
     $this->artisan('app:convert-json-json')->assertExitCode(0);
 
@@ -447,9 +447,9 @@ test('a busy target lock blocks different processes that generate the same targe
         $heldLock->release();
     }
 
-    Storage::disk('public')->assertExists($input);
-    Storage::disk('public')->assertMissing($target);
-    Storage::disk('public')->assertDirectoryEmpty(
+    Storage::disk('integrations')->assertExists($input);
+    Storage::disk('integrations')->assertMissing($target);
+    Storage::disk('integrations')->assertDirectoryEmpty(
         'polling/collection-client/json/outgoing/destination-items/staging'
     );
 });
@@ -464,23 +464,23 @@ test('a target created by a cooperating publisher is detected inside the target 
     );
     $targetLock = Cache::lock('eai:transform-target:' . hash('sha256', $target), 60);
     expect($targetLock->get())->toBeTrue();
-    Storage::disk('public')->put($target, $content);
+    Storage::disk('integrations')->put($target, $content);
     $targetLock->release();
 
     $this->artisan('app:convert-json-json')->assertExitCode(0);
 
-    expect(Storage::disk('public')->get($target))->toBe($content);
-    Storage::disk('public')->assertExists(str_replace('/validated/', '/processed/', $input));
+    expect(Storage::disk('integrations')->get($target))->toBe($content);
+    Storage::disk('integrations')->assertExists(str_replace('/validated/', '/processed/', $input));
 });
 
 test('the target lock is released when storage throws inside the publication region', function () {
     [$client] = collectionContext();
     $input = collectionInput($client, 'source-items', 'target-exception.json', '{"data":[{"customer":{"id":"A"}}]}');
     $target = 'polling/collection-client/json/outgoing/destination-items/raw/target-exception-item-000001.json';
-    $realDisk = Storage::disk('public');
+    $realDisk = Storage::disk('integrations');
     $disk = Mockery::mock($realDisk);
     $disk->shouldReceive('exists')->with($target)->once()->andThrow(new RuntimeException('target exists failure'));
-    Storage::shouldReceive('disk')->with('public')->andReturn($disk);
+    Storage::shouldReceive('disk')->with('integrations')->andReturn($disk);
 
     $this->artisan('app:convert-json-json')
         ->expectsOutputToContain('target exists failure')
@@ -506,10 +506,10 @@ test('send endpoints consumes per item outputs from the existing raw path', func
     $this->artisan('app:send-endpoints', ['--id' => $output->id])->assertExitCode(0);
 
     Http::assertSentCount(2);
-    Storage::disk('public')->assertExists(
+    Storage::disk('integrations')->assertExists(
         'polling/collection-client/json/outgoing/destination-items/processed/send-item-000001.json'
     );
-    Storage::disk('public')->assertExists(
+    Storage::disk('integrations')->assertExists(
         'polling/collection-client/json/outgoing/destination-items/processed/send-item-000002.json'
     );
 });

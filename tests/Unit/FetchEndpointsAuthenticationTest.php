@@ -10,7 +10,7 @@ use Illuminate\Support\Facades\Storage;
 use Symfony\Component\Console\Input\ArrayInput;
 use Symfony\Component\Console\Output\BufferedOutput;
 
-uses(Tests\TestCase::class);
+uses(Tests\UnitTestCase::class);
 
 function fetchAuthenticationHeaders(CadEndpoint $endpoint, Client $client): array
 {
@@ -43,7 +43,7 @@ function fetchClient(array $attributes = []): Client
 }
 
 beforeEach(function () {
-    Storage::fake('public');
+    Storage::fake('integrations');
     Schema::create('cad_interface_status', function (Blueprint $table) {
         $table->id('int_id');
         $table->string('int_direcao')->nullable();
@@ -59,7 +59,7 @@ beforeEach(function () {
 });
 
 test('fetch uses the default or configured key from json tokens', function (?string $key, array $content, string $expected) {
-    Storage::disk('public')->put('token/cliente-fetch/orders/auth.txt', json_encode($content));
+    Storage::disk('integrations')->put('token/cliente-fetch/orders/auth.txt', json_encode($content));
 
     [$headers] = fetchAuthenticationHeaders(fetchEndpoint(['auth_token' => $key]), fetchClient());
 
@@ -71,7 +71,7 @@ test('fetch uses the default or configured key from json tokens', function (?str
 
 test('fetch supports plain text, fixed and client tokens', function (string $source, ?string $configured, ?string $clientToken, string $expected) {
     if ($source === 'file') {
-        Storage::disk('public')->put('token/cliente-fetch/orders/auth.txt', "  {$expected}\n");
+        Storage::disk('integrations')->put('token/cliente-fetch/orders/auth.txt', "  {$expected}\n");
     }
 
     [$headers] = fetchAuthenticationHeaders(
@@ -87,7 +87,7 @@ test('fetch supports plain text, fixed and client tokens', function (string $sou
 ]);
 
 test('fetch rejects non scalar token values', function () {
-    Storage::disk('public')->put('token/cliente-fetch/orders/auth.txt', json_encode([
+    Storage::disk('integrations')->put('token/cliente-fetch/orders/auth.txt', json_encode([
         'access_token' => ['invalid-token'],
     ]));
 
@@ -98,6 +98,7 @@ test('fetch rejects non scalar token values', function () {
 });
 
 test('fetch preserves response bodies exactly as received in raw storage', function () {
+    Storage::fake('public');
     $command = new FetchEndpoints();
     $buffer = new BufferedOutput();
     $command->setOutput(new OutputStyle(new ArrayInput([]), $buffer));
@@ -153,17 +154,17 @@ test('fetch preserves response bodies exactly as received in raw storage', funct
         $method->invoke($command, $endpoint, 'cliente-fetch', $response, $case['extension']);
 
         if ($case['direction'] === 'auth') {
-            expect(Storage::disk('public')->get('token/cliente-fetch/auth/auth.txt'))->toBe($case['body']);
+            expect(Storage::disk('integrations')->get('token/cliente-fetch/auth/auth.txt'))->toBe($case['body']);
         } else {
             $path = "polling/cliente-fetch/{$case['extension']}/incoming/{$name}/raw";
-            $files = Storage::disk('public')->files($path);
+            $files = Storage::disk('integrations')->files($path);
 
             expect($files)->toHaveCount(1)
-                ->and(Storage::disk('public')->get($files[0]))->toBe($case['body']);
+                ->and(Storage::disk('integrations')->get($files[0]))->toBe($case['body']);
         }
     }
 
-    $savedJson = Storage::disk('public')->get(Storage::disk('public')->files(
+    $savedJson = Storage::disk('integrations')->get(Storage::disk('integrations')->files(
         'polling/cliente-fetch/json/incoming/json/raw'
     )[0]);
 

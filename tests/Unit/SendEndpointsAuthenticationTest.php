@@ -8,7 +8,7 @@ use Illuminate\Support\Facades\Storage;
 use Symfony\Component\Console\Input\ArrayInput;
 use Symfony\Component\Console\Output\BufferedOutput;
 
-uses(Tests\TestCase::class);
+uses(Tests\UnitTestCase::class);
 
 function sendAuthenticationHeaders(CadEndpoint $endpoint, Client $client): array
 {
@@ -41,11 +41,11 @@ function sendClient(array $attributes = []): Client
 }
 
 beforeEach(function () {
-    Storage::fake('public');
+    Storage::fake('integrations');
 });
 
 test('send uses the default or configured key from json tokens', function (?string $key, array $content, string $expected) {
-    Storage::disk('public')->put('token/cliente-send/orders/auth.txt', json_encode($content));
+    Storage::disk('integrations')->put('token/cliente-send/orders/auth.txt', json_encode($content));
 
     [$headers] = sendAuthenticationHeaders(sendEndpoint(['auth_token' => $key]), sendClient());
 
@@ -57,7 +57,7 @@ test('send uses the default or configured key from json tokens', function (?stri
 
 test('send supports plain text, fixed and client tokens', function (string $source, ?string $configured, ?string $clientToken, string $expected) {
     if ($source === 'file') {
-        Storage::disk('public')->put('token/cliente-send/orders/auth.txt', "  {$expected}\n");
+        Storage::disk('integrations')->put('token/cliente-send/orders/auth.txt', "  {$expected}\n");
     }
 
     [$headers] = sendAuthenticationHeaders(
@@ -73,7 +73,7 @@ test('send supports plain text, fixed and client tokens', function (string $sour
 ]);
 
 test('send rejects non scalar token values', function () {
-    Storage::disk('public')->put('token/cliente-send/orders/auth.txt', json_encode([
+    Storage::disk('integrations')->put('token/cliente-send/orders/auth.txt', json_encode([
         'access_token' => ['invalid-token'],
     ]));
 

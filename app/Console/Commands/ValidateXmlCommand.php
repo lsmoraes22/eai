@@ -37,25 +37,25 @@ class ValidateXmlCommand extends Command
                 $refusedPath   = "polling/{$clientCode}/{$endpointExt}/incoming/{$endpointName}/refused/";
 
                 // Garantir que existam
-                Storage::disk('public')->makeDirectory($validatedPath);
-                Storage::disk('public')->makeDirectory($refusedPath);
+                Storage::disk('integrations')->makeDirectory($validatedPath);
+                Storage::disk('integrations')->makeDirectory($refusedPath);
 
                 // Caminho do XSD
                 $xsdPath = "polling/{$clientCode}/xsd/{$ep->nome}.xsd";
 
-                if (!Storage::disk('public')->exists($xsdPath)) {
+                if (!Storage::disk('integrations')->exists($xsdPath)) {
                     $this->error("❌ XSD não encontrado para endpoint {$ep->name}");
                     continue;
                 }
 
                 // Listar XMLs brutos
-                $xmlFiles = Storage::disk('public')->files($incomingPath);
+                $xmlFiles = Storage::disk('integrations')->files($incomingPath);
                 foreach ($xmlFiles as $xmlFile) {
 
                     if (!str_ends_with($xmlFile, '.xml')) continue;
 
                     $filename = basename($xmlFile);
-                    $xmlContent = Storage::disk('public')->get($xmlFile);
+                    $xmlContent = Storage::disk('integrations')->get($xmlFile);
 
 		    // Extrair conteúdo interno
 		    $xmlService = new \App\Services\XmlService();
@@ -69,7 +69,7 @@ class ValidateXmlCommand extends Command
                     $dom->loadXML($payload);
 
                     libxml_use_internal_errors(true);
-                    $isValid = $dom->schemaValidate(Storage::disk('public')->path($xsdPath));
+                    $isValid = $dom->schemaValidate(Storage::disk('integrations')->path($xsdPath));
                     $errors = libxml_get_errors();
                     libxml_clear_errors();
 
@@ -84,7 +84,7 @@ class ValidateXmlCommand extends Command
                     // VALIDADO
                     if ($isValid) {
 
-                        Storage::disk('public')->move($xmlFile, $validatedPath . $filename);
+                        Storage::disk('integrations')->move($xmlFile, $validatedPath . $filename);
                         $cad->int_mensagem = "OK";
 		    	if ($xmlService->message) {
     			    // Você pode guardar isso no cad_interface_status
@@ -100,7 +100,7 @@ class ValidateXmlCommand extends Command
                     // RECUSADO
                     else {
 
-                        Storage::disk('public')->move($xmlFile, $refusedPath . $filename);
+                        Storage::disk('integrations')->move($xmlFile, $refusedPath . $filename);
 
                         $msg = '';
                         foreach ($errors as $err) {

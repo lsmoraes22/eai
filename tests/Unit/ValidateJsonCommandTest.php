@@ -8,7 +8,7 @@ use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Facades\Storage;
 
-uses(Tests\TestCase::class);
+uses(Tests\UnitTestCase::class);
 
 function validationSchema(): string
 {
@@ -56,7 +56,7 @@ function validationEndpoint(string $name = 'external_invoices'): array
 function validationRaw(string $filename, string $content, string $endpointSlug = 'external-invoices'): string
 {
     $path = "polling/validation-client/json/incoming/{$endpointSlug}/raw/{$filename}";
-    Storage::disk('public')->put($path, $content);
+    Storage::disk('integrations')->put($path, $content);
 
     return $path;
 }
@@ -64,7 +64,7 @@ function validationRaw(string $filename, string $content, string $endpointSlug =
 function validationPutSchema(string $content): string
 {
     $path = 'polling/validation-client/schema/external-invoices.json';
-    Storage::disk('public')->put($path, $content);
+    Storage::disk('integrations')->put($path, $content);
 
     return $path;
 }
@@ -79,7 +79,7 @@ function validationStatus(string $filename, int $status = 0): CadInterfaceStatus
 }
 
 beforeEach(function () {
-    Storage::fake('public');
+    Storage::fake('integrations');
     Cache::flush();
 
     Schema::create('clients', function (Blueprint $table) {
@@ -115,8 +115,8 @@ test('a missing schema leaves raw reprocessable and status unchanged', function 
         )
         ->assertExitCode(0);
 
-    Storage::disk('public')->assertExists($raw);
-    Storage::disk('public')->assertMissing(str_replace('/raw/', '/validated/', $raw));
+    Storage::disk('integrations')->assertExists($raw);
+    Storage::disk('integrations')->assertMissing(str_replace('/raw/', '/validated/', $raw));
     expect($status->refresh()->int_status)->toBe(0);
 });
 
@@ -129,8 +129,8 @@ test('malformed schema json is isolated and leaves raw reprocessable', function 
         ->expectsOutputToContain('Schema JSON inválido')
         ->assertExitCode(0);
 
-    Storage::disk('public')->assertExists($raw);
-    Storage::disk('public')->assertMissing(str_replace('/raw/', '/validated/', $raw));
+    Storage::disk('integrations')->assertExists($raw);
+    Storage::disk('integrations')->assertMissing(str_replace('/raw/', '/validated/', $raw));
 });
 
 test('a structurally invalid schema exception is controlled and preserves raw', function () {
@@ -142,7 +142,7 @@ test('a structurally invalid schema exception is controlled and preserves raw', 
         ->expectsOutputToContain('Falha no schema ao validar invalid-schema.json')
         ->assertExitCode(0);
 
-    Storage::disk('public')->assertExists($raw);
+    Storage::disk('integrations')->assertExists($raw);
 });
 
 test('syntactically invalid input moves to refused and updates status after move', function () {
@@ -155,8 +155,8 @@ test('syntactically invalid input moves to refused and updates status after move
         ->expectsOutputToContain('JSON RECUSADO: syntax.json - Erro de sintaxe JSON')
         ->assertExitCode(0);
 
-    Storage::disk('public')->assertMissing($raw);
-    Storage::disk('public')->assertExists(str_replace('/raw/', '/refused/', $raw));
+    Storage::disk('integrations')->assertMissing($raw);
+    Storage::disk('integrations')->assertExists(str_replace('/raw/', '/refused/', $raw));
     expect($status->refresh()->int_status)->toBe(2)
         ->and($status->int_mensagem)->toBe('Erro de sintaxe JSON');
 });
@@ -169,8 +169,8 @@ test('flexible draft six schema accepts valid documents', function (string $cont
 
     $this->artisan('app:validate-json')->assertExitCode(0);
 
-    Storage::disk('public')->assertMissing($raw);
-    Storage::disk('public')->assertExists(str_replace('/raw/', '/validated/', $raw));
+    Storage::disk('integrations')->assertMissing($raw);
+    Storage::disk('integrations')->assertExists(str_replace('/raw/', '/validated/', $raw));
     expect($status->refresh()->int_status)->toBe(1);
 })->with([
     'extra fields and nullable payment' => [json_encode([
@@ -198,8 +198,8 @@ test('documents that violate the schema move to refused', function (string $cont
         ->expectsOutputToContain($expectedProperty)
         ->assertExitCode(0);
 
-    Storage::disk('public')->assertExists(str_replace('/raw/', '/refused/', $raw));
-    Storage::disk('public')->assertMissing(str_replace('/raw/', '/validated/', $raw));
+    Storage::disk('integrations')->assertExists(str_replace('/raw/', '/refused/', $raw));
+    Storage::disk('integrations')->assertMissing(str_replace('/raw/', '/validated/', $raw));
     expect($status->refresh()->int_status)->toBe(2);
 })->with([
     'missing required id' => [
@@ -217,10 +217,10 @@ test('a false move on validation success leaves status unchanged', function () {
     validationPutSchema(validationSchema());
     $raw = validationRaw('success-move-false.json', '{"data":[],"meta":{}}');
     $status = validationStatus('success-move-false.json');
-    $realDisk = Storage::disk('public');
+    $realDisk = Storage::disk('integrations');
     $disk = Mockery::mock($realDisk);
     $disk->shouldReceive('move')->once()->andReturnFalse();
-    Storage::shouldReceive('disk')->with('public')->andReturn($disk);
+    Storage::shouldReceive('disk')->with('integrations')->andReturn($disk);
 
     $this->artisan('app:validate-json')
         ->expectsOutputToContain('Falha ao mover success-move-false.json')
@@ -235,10 +235,10 @@ test('a false move on refusal leaves status unchanged', function () {
     validationPutSchema(validationSchema());
     $raw = validationRaw('refusal-move-false.json', '{"data":[');
     $status = validationStatus('refusal-move-false.json');
-    $realDisk = Storage::disk('public');
+    $realDisk = Storage::disk('integrations');
     $disk = Mockery::mock($realDisk);
     $disk->shouldReceive('move')->once()->andReturnFalse();
-    Storage::shouldReceive('disk')->with('public')->andReturn($disk);
+    Storage::shouldReceive('disk')->with('integrations')->andReturn($disk);
 
     $this->artisan('app:validate-json')->assertExitCode(0);
 
@@ -251,10 +251,10 @@ test('a move exception is controlled and leaves status unchanged', function () {
     validationPutSchema(validationSchema());
     $raw = validationRaw('move-exception.json', '{"data":[],"meta":{}}');
     $status = validationStatus('move-exception.json');
-    $realDisk = Storage::disk('public');
+    $realDisk = Storage::disk('integrations');
     $disk = Mockery::mock($realDisk);
     $disk->shouldReceive('move')->once()->andThrow(new RuntimeException('move failed'));
-    Storage::shouldReceive('disk')->with('public')->andReturn($disk);
+    Storage::shouldReceive('disk')->with('integrations')->andReturn($disk);
 
     $this->artisan('app:validate-json')
         ->expectsOutputToContain('move failed')
@@ -272,8 +272,8 @@ test('a paginated filename is preserved after validation', function () {
 
     $this->artisan('app:validate-json')->assertExitCode(0);
 
-    Storage::disk('public')->assertMissing($raw);
-    Storage::disk('public')->assertExists(str_replace('/raw/', '/validated/', $raw));
+    Storage::disk('integrations')->assertMissing($raw);
+    Storage::disk('integrations')->assertExists(str_replace('/raw/', '/validated/', $raw));
 });
 
 test('a move failure for one file does not prevent processing the next file', function () {
@@ -283,7 +283,7 @@ test('a move failure for one file does not prevent processing the next file', fu
     $second = validationRaw('b-second.json', '{"data":[],"meta":{}}');
     $firstStatus = validationStatus('a-first.json');
     $secondStatus = validationStatus('b-second.json');
-    $realDisk = Storage::disk('public');
+    $realDisk = Storage::disk('integrations');
     $calls = 0;
     $disk = Mockery::mock($realDisk);
     $disk->shouldReceive('move')->twice()->andReturnUsing(
@@ -292,7 +292,7 @@ test('a move failure for one file does not prevent processing the next file', fu
             return $calls === 1 ? false : $realDisk->move($from, $to);
         }
     );
-    Storage::shouldReceive('disk')->with('public')->andReturn($disk);
+    Storage::shouldReceive('disk')->with('integrations')->andReturn($disk);
 
     $this->artisan('app:validate-json')->assertExitCode(0);
 
@@ -307,14 +307,14 @@ test('an existing destination is never overwritten', function () {
     validationPutSchema(validationSchema());
     $raw = validationRaw('collision.json', '{"data":[],"meta":{}}');
     $target = str_replace('/raw/', '/validated/', $raw);
-    Storage::disk('public')->put($target, '{"preexisting":true}');
+    Storage::disk('integrations')->put($target, '{"preexisting":true}');
     $status = validationStatus('collision.json');
 
     $this->artisan('app:validate-json')
         ->expectsOutputToContain('destino já existe')
         ->assertExitCode(0);
 
-    Storage::disk('public')->assertExists($raw);
-    expect(Storage::disk('public')->get($target))->toBe('{"preexisting":true}')
+    Storage::disk('integrations')->assertExists($raw);
+    expect(Storage::disk('integrations')->get($target))->toBe('{"preexisting":true}')
         ->and($status->refresh()->int_status)->toBe(0);
 });

@@ -36,8 +36,8 @@ class EditJsonSchema extends EditRecord
     	$filename = basename($tempPath);
     	$finalPath = "polling/{$clientCode}/schema/{$filename}";
 
-    	if (\Illuminate\Support\Facades\Storage::disk('public')->exists($tempPath)) {
-    	    \Illuminate\Support\Facades\Storage::disk('public')->move($tempPath, $finalPath);
+        if (\Illuminate\Support\Facades\Storage::disk('integrations')->exists($tempPath)) {
+            \Illuminate\Support\Facades\Storage::disk('integrations')->move($tempPath, $finalPath);
     	}
 
     	$data['path'] = $finalPath;

@@ -52,8 +52,8 @@ trait HandlesHttpSends
     protected function getTokenFromFile($clientFolder, $model)
     {
         $path = "tokens/{$clientFolder}/" . Str::slug($model->nome) . ".txt";
-        if (Storage::disk('public')->exists($path)) {
-            return trim(Storage::disk('public')->get($path));
+        if (Storage::disk('integrations')->exists($path)) {
+            return trim(Storage::disk('integrations')->get($path));
         }
         return null;
     }

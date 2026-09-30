@@ -10,7 +10,7 @@ use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
 
-uses(Tests\TestCase::class);
+uses(Tests\UnitTestCase::class);
 
 function routingClient(array $overrides = []): Client
 {
@@ -56,13 +56,13 @@ function putValidatedJson(Client $client, string $name, string $filename = 'inpu
 {
     $path = 'polling/' . Str::slug($client->code ?: $client->name)
         . "/json/incoming/{$name}/validated/{$filename}";
-    Storage::disk('public')->put($path, '{"source":"value"}');
+    Storage::disk('integrations')->put($path, '{"source":"value"}');
 
     return $path;
 }
 
 beforeEach(function () {
-    Storage::fake('public');
+    Storage::fake('integrations');
 
     Schema::create('clients', function (Blueprint $table) {
         $table->id();
@@ -119,10 +119,10 @@ test('a legacy process still routes by its unchanged name', function () {
     $this->artisan('app:convert-json-json')->assertExitCode(0);
 
     $output = 'polling/' . $client->code . '/json/outgoing/legacy_process/raw/input.json';
-    Storage::disk('public')->assertExists($output);
-    expect(json_decode(Storage::disk('public')->get($output), true))->toBe(['target' => 'value']);
-    Storage::disk('public')->assertMissing($input);
-    Storage::disk('public')->assertExists(str_replace('/validated/', '/processed/', $input));
+    Storage::disk('integrations')->assertExists($output);
+    expect(json_decode(Storage::disk('integrations')->get($output), true))->toBe(['target' => 'value']);
+    Storage::disk('integrations')->assertMissing($input);
+    Storage::disk('integrations')->assertExists(str_replace('/validated/', '/processed/', $input));
 });
 
 test('explicit endpoints route different names through normalized slugs to the send directory', function () {
@@ -139,8 +139,8 @@ test('explicit endpoints route different names through normalized slugs to the s
     $this->artisan('app:convert-json-json')->assertExitCode(0);
 
     $sendDirectory = 'polling/customer/json/outgoing/mk-contas-pagar/raw';
-    Storage::disk('public')->assertExists("{$sendDirectory}/page-000001.json");
-    Storage::disk('public')->assertExists(str_replace('/validated/', '/processed/', $input));
+    Storage::disk('integrations')->assertExists("{$sendDirectory}/page-000001.json");
+    Storage::disk('integrations')->assertExists(str_replace('/validated/', '/processed/', $input));
 });
 
 test('an explicit single output mode preserves the original filename and one to one behavior', function () {
@@ -157,10 +157,10 @@ test('an explicit single output mode preserves the original filename and one to 
 
     $this->artisan('app:convert-json-json')->assertExitCode(0);
 
-    Storage::disk('public')->assertExists(
+    Storage::disk('integrations')->assertExists(
         'polling/single-client/json/outgoing/single-output/raw/original-name.json'
     );
-    Storage::disk('public')->assertExists(str_replace('/validated/', '/processed/', $input));
+    Storage::disk('integrations')->assertExists(str_replace('/validated/', '/processed/', $input));
 });
 
 test('an inactive json process is not processed', function () {
@@ -175,8 +175,8 @@ test('an inactive json process is not processed', function () {
 
     $this->artisan('app:convert-json-json')->assertExitCode(0);
 
-    Storage::disk('public')->assertExists($input);
-    Storage::disk('public')->assertMissing(
+    Storage::disk('integrations')->assertExists($input);
+    Storage::disk('integrations')->assertMissing(
         "polling/{$client->code}/json/outgoing/inactive_process/raw/input.json"
     );
 });
@@ -197,8 +197,8 @@ test('explicit endpoints from different clients are rejected', function () {
         ->expectsOutputToContain('pertencem a clientes diferentes')
         ->assertExitCode(0);
 
-    Storage::disk('public')->assertExists($input);
-    Storage::disk('public')->assertMissing(
+    Storage::disk('integrations')->assertExists($input);
+    Storage::disk('integrations')->assertMissing(
         'polling/input-client/json/outgoing/output/raw/input.json'
     );
 });
@@ -207,10 +207,10 @@ test('a storage write failure leaves the validated input eligible', function () 
     $client = routingClient();
     routingProcess(['name' => 'write_failure']);
     $input = putValidatedJson($client, 'write_failure');
-    $realDisk = Storage::disk('public');
+    $realDisk = Storage::disk('integrations');
     $disk = Mockery::mock($realDisk);
     $disk->shouldReceive('put')->once()->andReturnFalse();
-    Storage::shouldReceive('disk')->with('public')->andReturn($disk);
+    Storage::shouldReceive('disk')->with('integrations')->andReturn($disk);
 
     $this->artisan('app:convert-json-json')
         ->expectsOutputToContain('Falha ao salvar payload transformado')
@@ -225,10 +225,10 @@ test('a storage move failure leaves the input unprocessed and does not mark its 
     routingProcess(['name' => 'move_failure']);
     $input = putValidatedJson($client, 'move_failure');
     $status = CadInterfaceStatus::create(['int_arquivo' => 'input.json', 'int_status' => 1]);
-    $realDisk = Storage::disk('public');
+    $realDisk = Storage::disk('integrations');
     $disk = Mockery::mock($realDisk);
     $disk->shouldReceive('move')->once()->andReturnFalse();
-    Storage::shouldReceive('disk')->with('public')->andReturn($disk);
+    Storage::shouldReceive('disk')->with('integrations')->andReturn($disk);
 
     $this->artisan('app:convert-json-json')
         ->expectsOutputToContain('Falha ao mover arquivo processado')
@@ -242,16 +242,16 @@ test('json validation uses the same slug as fetch endpoints', function () {
     $client = routingClient(['code' => 'customer']);
     routingEndpoint($client, ['nome' => 'algar_faturas', 'direcao' => 'entrada']);
     $raw = 'polling/customer/json/incoming/algar-faturas/raw/page-000001.json';
-    Storage::disk('public')->put($raw, '{"source":"value"}');
-    Storage::disk('public')->put(
+    Storage::disk('integrations')->put($raw, '{"source":"value"}');
+    Storage::disk('integrations')->put(
         'polling/customer/schema/algar-faturas.json',
         '{"$schema":"http://json-schema.org/draft-06/schema#","type":"object"}'
     );
 
     $this->artisan('app:validate-json')->assertExitCode(0);
 
-    Storage::disk('public')->assertMissing($raw);
-    Storage::disk('public')->assertExists(
+    Storage::disk('integrations')->assertMissing($raw);
+    Storage::disk('integrations')->assertExists(
         'polling/customer/json/incoming/algar-faturas/validated/page-000001.json'
     );
 });

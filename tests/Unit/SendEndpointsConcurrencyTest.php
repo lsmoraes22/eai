@@ -10,7 +10,7 @@ use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
 
-uses(Tests\TestCase::class);
+uses(Tests\UnitTestCase::class);
 
 function createSendConcurrencyEndpoint(array $overrides = []): CadEndpoint
 {
@@ -69,7 +69,7 @@ beforeEach(function () {
     config(['cache.default' => 'array']);
     Cache::setDefaultDriver('array');
     Cache::flush();
-    Storage::fake('public');
+    Storage::fake('integrations');
 
     Schema::create('clients', function (Blueprint $table) {
         $table->id();
@@ -115,7 +115,7 @@ beforeEach(function () {
 test('only one execution sends an item when two executions dispute it', function () {
     $endpoint = createSendConcurrencyEndpoint();
     $path = sendConcurrencyPath($endpoint, 'order.json');
-    Storage::disk('public')->put($path, '{"id":1}');
+    Storage::disk('integrations')->put($path, '{"id":1}');
     $activeExecution = sendItemLock($endpoint, $path);
     expect($activeExecution->get())->toBeTrue();
     Http::fake(['*' => Http::response('', 200)]);
@@ -135,7 +135,7 @@ test('an occupied item lock changes neither file nor status', function () {
     $endpoint = createSendConcurrencyEndpoint();
     $path = sendConcurrencyPath($endpoint, 'occupied.json');
     $status = createSendStatus('occupied.json');
-    Storage::disk('public')->put($path, '{"id":1}');
+    Storage::disk('integrations')->put($path, '{"id":1}');
     $lock = sendItemLock($endpoint, $path);
     expect($lock->get())->toBeTrue();
     Http::fake();
@@ -145,8 +145,8 @@ test('an occupied item lock changes neither file nor status', function () {
         ->assertExitCode(0);
 
     Http::assertNothingSent();
-    Storage::disk('public')->assertExists($path);
-    Storage::disk('public')->assertMissing(sendProcessedPath($endpoint, 'occupied.json'));
+    Storage::disk('integrations')->assertExists($path);
+    Storage::disk('integrations')->assertMissing(sendProcessedPath($endpoint, 'occupied.json'));
     expect($status->refresh()->int_status)->toBe(0)
         ->and($status->int_mensagem)->toBe('Pendente');
     $lock->release();
@@ -156,8 +156,8 @@ test('different items can be processed independently', function () {
     $endpoint = createSendConcurrencyEndpoint();
     $lockedPath = sendConcurrencyPath($endpoint, 'locked.json');
     $availablePath = sendConcurrencyPath($endpoint, 'available.json');
-    Storage::disk('public')->put($lockedPath, '{"id":1}');
-    Storage::disk('public')->put($availablePath, '{"id":2}');
+    Storage::disk('integrations')->put($lockedPath, '{"id":1}');
+    Storage::disk('integrations')->put($availablePath, '{"id":2}');
     $lock = sendItemLock($endpoint, $lockedPath);
     expect($lock->get())->toBeTrue();
     Http::fake(['*' => Http::response('', 200)]);
@@ -165,8 +165,8 @@ test('different items can be processed independently', function () {
     $this->artisan('app:send-endpoints', ['--id' => $endpoint->id])->assertExitCode(0);
 
     Http::assertSentCount(1);
-    Storage::disk('public')->assertExists($lockedPath);
-    Storage::disk('public')->assertExists(sendProcessedPath($endpoint, 'available.json'));
+    Storage::disk('integrations')->assertExists($lockedPath);
+    Storage::disk('integrations')->assertExists(sendProcessedPath($endpoint, 'available.json'));
     $lock->release();
 });
 
@@ -175,8 +175,8 @@ test('the same filename in different endpoints does not collide', function () {
     $availableEndpoint = createSendConcurrencyEndpoint();
     $lockedPath = sendConcurrencyPath($lockedEndpoint, 'same.json');
     $availablePath = sendConcurrencyPath($availableEndpoint, 'same.json');
-    Storage::disk('public')->put($lockedPath, '{"endpoint":1}');
-    Storage::disk('public')->put($availablePath, '{"endpoint":2}');
+    Storage::disk('integrations')->put($lockedPath, '{"endpoint":1}');
+    Storage::disk('integrations')->put($availablePath, '{"endpoint":2}');
     $lock = sendItemLock($lockedEndpoint, $lockedPath);
     expect($lock->get())->toBeTrue();
     Http::fake(['*' => Http::response('', 200)]);
@@ -184,21 +184,21 @@ test('the same filename in different endpoints does not collide', function () {
     $this->artisan('app:send-endpoints', ['--id' => $availableEndpoint->id])->assertExitCode(0);
 
     Http::assertSentCount(1);
-    Storage::disk('public')->assertExists($lockedPath);
-    Storage::disk('public')->assertExists(sendProcessedPath($availableEndpoint, 'same.json'));
+    Storage::disk('integrations')->assertExists($lockedPath);
+    Storage::disk('integrations')->assertExists(sendProcessedPath($availableEndpoint, 'same.json'));
     $lock->release();
 });
 
 test('the lock remains held during http and until the item transition completes', function () {
     $endpoint = createSendConcurrencyEndpoint();
     $path = sendConcurrencyPath($endpoint, 'held.json');
-    Storage::disk('public')->put($path, '{"id":1}');
+    Storage::disk('integrations')->put($path, '{"id":1}');
     $competingLockAcquired = null;
     $rawExistedDuringRequest = null;
     Http::fake(function () use ($endpoint, $path, &$competingLockAcquired, &$rawExistedDuringRequest) {
         $competingLock = sendItemLock($endpoint, $path);
         $competingLockAcquired = $competingLock->get();
-        $rawExistedDuringRequest = Storage::disk('public')->exists($path);
+        $rawExistedDuringRequest = Storage::disk('integrations')->exists($path);
 
         return Http::response('', 200);
     });
@@ -207,8 +207,8 @@ test('the lock remains held during http and until the item transition completes'
 
     expect($competingLockAcquired)->toBeFalse()
         ->and($rawExistedDuringRequest)->toBeTrue();
-    Storage::disk('public')->assertMissing($path);
-    Storage::disk('public')->assertExists(sendProcessedPath($endpoint, 'held.json'));
+    Storage::disk('integrations')->assertMissing($path);
+    Storage::disk('integrations')->assertExists(sendProcessedPath($endpoint, 'held.json'));
     $nextLock = sendItemLock($endpoint, $path);
     expect($nextLock->get())->toBeTrue();
     $nextLock->release();
@@ -217,7 +217,7 @@ test('the lock remains held during http and until the item transition completes'
 test('the lock is released after success', function () {
     $endpoint = createSendConcurrencyEndpoint();
     $path = sendConcurrencyPath($endpoint, 'success.json');
-    Storage::disk('public')->put($path, '{"id":1}');
+    Storage::disk('integrations')->put($path, '{"id":1}');
     Http::fake(['*' => Http::response('', 200)]);
 
     $this->artisan('app:send-endpoints', ['--id' => $endpoint->id])->assertExitCode(0);
@@ -244,7 +244,7 @@ test('a failed move after http success does not mark success and releases the lo
         ->once()
         ->andReturnFalse();
     $disk->shouldReceive('exists')->with($path)->once()->andReturnTrue();
-    Storage::shouldReceive('disk')->with('public')->andReturn($disk);
+    Storage::shouldReceive('disk')->with('integrations')->andReturn($disk);
     Http::fake(['*' => Http::response('', 200)]);
 
     $this->artisan('app:send-endpoints', ['--id' => $endpoint->id])
@@ -254,7 +254,7 @@ test('a failed move after http success does not mark success and releases the lo
 
     expect($status->refresh()->int_status)->toBe(0)
         ->and($status->int_mensagem)->toBe('Pendente')
-        ->and(Storage::disk('public')->exists($path))->toBeTrue();
+        ->and(Storage::disk('integrations')->exists($path))->toBeTrue();
     $nextLock = sendItemLock($endpoint, $path);
     expect($nextLock->get())->toBeTrue();
     $nextLock->release();
@@ -264,12 +264,12 @@ test('an http error releases the lock and leaves the item eligible', function ()
     $endpoint = createSendConcurrencyEndpoint();
     $path = sendConcurrencyPath($endpoint, 'http-error.json');
     $status = createSendStatus('http-error.json');
-    Storage::disk('public')->put($path, '{"id":1}');
+    Storage::disk('integrations')->put($path, '{"id":1}');
     Http::fake(['*' => Http::response('unavailable', 503)]);
 
     $this->artisan('app:send-endpoints', ['--id' => $endpoint->id])->assertExitCode(0);
 
-    Storage::disk('public')->assertExists($path);
+    Storage::disk('integrations')->assertExists($path);
     expect($status->refresh()->int_status)->toBe(2);
     $nextLock = sendItemLock($endpoint, $path);
     expect($nextLock->get())->toBeTrue();
@@ -279,12 +279,12 @@ test('an http error releases the lock and leaves the item eligible', function ()
 test('a transport exception releases the lock and leaves the item eligible', function () {
     $endpoint = createSendConcurrencyEndpoint();
     $path = sendConcurrencyPath($endpoint, 'exception.json');
-    Storage::disk('public')->put($path, '{"id":1}');
+    Storage::disk('integrations')->put($path, '{"id":1}');
     Http::fake(fn () => throw new RuntimeException('connection failed'));
 
     $this->artisan('app:send-endpoints', ['--id' => $endpoint->id])->assertExitCode(0);
 
-    Storage::disk('public')->assertExists($path);
+    Storage::disk('integrations')->assertExists($path);
     $nextLock = sendItemLock($endpoint, $path);
     expect($nextLock->get())->toBeTrue();
     $nextLock->release();
@@ -293,7 +293,7 @@ test('a transport exception releases the lock and leaves the item eligible', fun
 test('an unexpected throwable releases the lock', function () {
     $endpoint = createSendConcurrencyEndpoint();
     $path = sendConcurrencyPath($endpoint, 'throwable.json');
-    Storage::disk('public')->put($path, '{"id":1}');
+    Storage::disk('integrations')->put($path, '{"id":1}');
     Http::fake(fn () => throw new Error('unexpected failure'));
     $caught = false;
 
@@ -315,8 +315,8 @@ test('manual execution with id respects the item lock', function () {
     $otherEndpoint = createSendConcurrencyEndpoint();
     $path = sendConcurrencyPath($endpoint, 'manual.json');
     $otherPath = sendConcurrencyPath($otherEndpoint, 'other.json');
-    Storage::disk('public')->put($path, '{"id":1}');
-    Storage::disk('public')->put($otherPath, '{"id":2}');
+    Storage::disk('integrations')->put($path, '{"id":1}');
+    Storage::disk('integrations')->put($otherPath, '{"id":2}');
     $lock = sendItemLock($endpoint, $path);
     expect($lock->get())->toBeTrue();
     Http::fake();
@@ -326,8 +326,8 @@ test('manual execution with id respects the item lock', function () {
         ->assertExitCode(0);
 
     Http::assertNothingSent();
-    Storage::disk('public')->assertExists($path);
-    Storage::disk('public')->assertExists($otherPath);
+    Storage::disk('integrations')->assertExists($path);
+    Storage::disk('integrations')->assertExists($otherPath);
     $lock->release();
 });
 
@@ -338,7 +338,7 @@ test('authentication remains applied while the item lock is used', function () {
         'auth_token' => 'fixed-token',
     ]);
     $path = sendConcurrencyPath($endpoint, 'authenticated.json');
-    Storage::disk('public')->put($path, '{"id":1}');
+    Storage::disk('integrations')->put($path, '{"id":1}');
     Http::fake(['*' => Http::response('', 200)]);
 
     $this->artisan('app:send-endpoints', ['--id' => $endpoint->id])->assertExitCode(0);

@@ -54,9 +54,9 @@ class Client extends Model
                 return $data['access_token'];
             }
 
-            Log::error("Erro na renovação (ID {$this->id}): " . $response->body());
+            Log::error("Erro na renovação (ID {$this->id}), HTTP " . $response->status());
         } catch (\Exception $e) {
-            Log::error("Exceção na renovação (ID {$this->id}): " . $e->getMessage());
+            Log::error("Exceção na renovação (ID {$this->id}): " . $e::class);
         }
 
         return null;

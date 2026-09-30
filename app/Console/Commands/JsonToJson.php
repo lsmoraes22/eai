@@ -61,8 +61,8 @@ class JsonToJson extends Command
                     $validatedPath = "{$origem}/{$clientCode}/json/incoming/{$inputName}/validated/";
                     $outgoingPath  = "{$origem}/{$clientCode}/json/outgoing/{$outputName}/raw/";
 
-                    Storage::disk('public')->makeDirectory($outgoingPath);
-                    $files = Storage::disk('public')->files($validatedPath);
+                    Storage::disk('integrations')->makeDirectory($outgoingPath);
+                    $files = Storage::disk('integrations')->files($validatedPath);
 
                     foreach ($files as $filePath) {
                         $lockKey = 'eai:transform-item:' . hash('sha256', "{$p->id}|{$filePath}");
@@ -88,7 +88,7 @@ class JsonToJson extends Command
 
     private function processFile(string $filePath, string $outgoingPath, CadProcesso $process): bool
     {
-        $jsonContent = Storage::disk('public')->get($filePath);
+        $jsonContent = Storage::disk('integrations')->get($filePath);
 
         try {
             $inputArray = json_decode($jsonContent, true, 512, JSON_THROW_ON_ERROR);
@@ -119,7 +119,7 @@ class JsonToJson extends Command
             $jsonFinal = json_encode($outputArray, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR);
             $filename = basename($filePath);
 
-            if (!Storage::disk('public')->put("{$outgoingPath}/{$filename}", $jsonFinal)) {
+            if (!Storage::disk('integrations')->put("{$outgoingPath}/{$filename}", $jsonFinal)) {
                 $this->error("Falha ao salvar payload transformado: {$outgoingPath}/{$filename}");
                 return false;
             }
@@ -184,7 +184,7 @@ class JsonToJson extends Command
 
         try {
             foreach ($outputs as $filename => $content) {
-                if (!Storage::disk('public')->put("{$stagingPath}/{$filename}", $content)) {
+                if (!Storage::disk('integrations')->put("{$stagingPath}/{$filename}", $content)) {
                     $this->error("Falha ao salvar payload em staging: {$stagingPath}/{$filename}");
                     return false;
                 }
@@ -201,7 +201,7 @@ class JsonToJson extends Command
 
             return $this->finalizarProcesso($filePath, basename($filePath), $process->name);
         } finally {
-            Storage::disk('public')->deleteDirectory($stagingPath);
+            Storage::disk('integrations')->deleteDirectory($stagingPath);
         }
     }
 
@@ -218,8 +218,8 @@ class JsonToJson extends Command
         }
 
         try {
-            if (Storage::disk('public')->exists($target)) {
-                if (Storage::disk('public')->get($target) === $content) {
+            if (Storage::disk('integrations')->exists($target)) {
+                if (Storage::disk('integrations')->get($target) === $content) {
                     return true;
                 }
 
@@ -227,7 +227,7 @@ class JsonToJson extends Command
                 return false;
             }
 
-            if (!Storage::disk('public')->move($staged, $target)) {
+            if (!Storage::disk('integrations')->move($staged, $target)) {
                 $this->error("Falha ao publicar payload: {$target}");
                 return false;
             }
@@ -253,9 +253,9 @@ class JsonToJson extends Command
 
     private function finalizarProcesso($oldPath, $newFilename, $interface): bool {
         $targetPath = str_replace('/validated/', '/processed/', $oldPath);
-        Storage::disk('public')->makeDirectory(dirname($targetPath));
+        Storage::disk('integrations')->makeDirectory(dirname($targetPath));
 
-        if (!Storage::disk('public')->move($oldPath, $targetPath)) {
+        if (!Storage::disk('integrations')->move($oldPath, $targetPath)) {
             $this->error("Falha ao mover arquivo processado: {$oldPath}");
             return false;
         }

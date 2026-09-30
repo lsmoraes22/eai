@@ -50,12 +50,12 @@ class SendEndpoints extends Command
         $sourcePath = "polling/{$clientCode}/{$format}/outgoing/{$endpointSlug}/raw";
         $processedPath = "polling/{$clientCode}/{$format}/outgoing/{$endpointSlug}/processed";
 
-        if (!Storage::disk('public')->exists($sourcePath)){
-            $this->error(" Exceção: " . "Pasta de origem não existe: storage/app/public/{$sourcePath}"); 
+        if (!Storage::disk('integrations')->exists($sourcePath)){
+            $this->error(" Exceção: " . "Pasta de origem não existe: storage/app/private/integrations/{$sourcePath}");
             return;
         };
 
-        $files = Storage::disk('public')->files($sourcePath);
+        $files = Storage::disk('integrations')->files($sourcePath);
 
 
         foreach ($files as $filePath) {
@@ -78,9 +78,9 @@ class SendEndpoints extends Command
     private function processFile(CadEndpoint $endpoint, Client $client, string $filePath, string $processedPath, string $format): void
     {
         $filename = basename($filePath);
-        $content = Storage::disk('public')->get($filePath);
+        $content = Storage::disk('integrations')->get($filePath);
 
-        $this->info(" Enviando: {$filename} para {$endpoint->url}");
+        $this->info(" Enviando: {$filename} para endpoint ID {$endpoint->id}");
 
         // 1. Prepara Headers e Auth (Igual ao seu Fetch)
         $headers = is_array($endpoint->headers) ? $endpoint->headers : (json_decode($endpoint->headers, true) ?: []);
@@ -106,8 +106,8 @@ class SendEndpoints extends Command
 
             if ($response->successful()) {
                 // 3. Sucesso: Move para processados e atualiza status
-                Storage::disk('public')->makeDirectory($processedPath);
-                $moved = Storage::disk('public')->move($filePath, "{$processedPath}/{$filename}");
+                Storage::disk('integrations')->makeDirectory($processedPath);
+                $moved = Storage::disk('integrations')->move($filePath, "{$processedPath}/{$filename}");
 
                 if (!$moved) {
                     $this->error(" Falha ao mover {$filename} para processados. O item permanece pendente.");
@@ -123,7 +123,7 @@ class SendEndpoints extends Command
                 $this->info("   ✔ Sucesso!");
             } else {
                 // 4. Erro de API: Loga e mantém na pasta para retry
-                $errorMsg = "Erro {$response->status()}: " . $response->body();
+                $errorMsg = "Erro HTTP {$response->status()} no endpoint ID {$endpoint->id}";
                 $this->error(" Falha: " . $errorMsg);
 
                 CadInterfaceStatus::where('int_arquivo', $filename)
@@ -134,7 +134,8 @@ class SendEndpoints extends Command
             }
 
         } catch (\Exception $e) {
-            $this->error(" Exceção: " . $e->getMessage());
+            $this->error(" Exceção: " . $e::class
+                . ($e instanceof \Illuminate\Http\Client\RequestException ? ' HTTP ' . $e->response->status() : ''));
         }
     }
 
@@ -181,8 +182,8 @@ class SendEndpoints extends Command
         $endpointSlug = Str::slug($endpoint->nome);
         $path = "token/{$clientCode}/{$endpointSlug}/auth.txt";
 
-        if (Storage::disk('public')->exists($path)) {
-            return $this->extractToken(Storage::disk('public')->get($path), $endpoint->auth_token, $path);
+        if (Storage::disk('integrations')->exists($path)) {
+            return $this->extractToken(Storage::disk('integrations')->get($path), $endpoint->auth_token, $path);
         }
 
         return null;
@@ -210,7 +211,7 @@ class SendEndpoints extends Command
     private function validateTokenValue($token, string $path): ?string
     {
         if ($token === null || is_array($token) || is_object($token)) {
-            $this->error(" Token ausente ou não escalar em storage/app/public/{$path}");
+            $this->error(" Token ausente ou não escalar em storage/app/private/integrations/{$path}");
             return null;
         }
 

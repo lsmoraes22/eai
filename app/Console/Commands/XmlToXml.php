@@ -20,10 +20,10 @@ class XmlToXml extends Command
 
         foreach ($processos as $p) {
             $validatedPath = "{$origem}/{$clientCode}/xml/incoming/{$p->name}/validated/";
-            $files = Storage::disk('public')->files($validatedPath);
+            $files = Storage::disk('integrations')->files($validatedPath);
 
             foreach ($files as $filePath) {
-                $xmlContent = Storage::disk('public')->get($filePath);
+                $xmlContent = Storage::disk('integrations')->get($filePath);
 
                 // 1. Converte XML de entrada para Array para poder usar data_get
                 $xmlObject = simplexml_load_string($xmlContent);
@@ -38,7 +38,7 @@ class XmlToXml extends Command
 
                 // 4. Salva no outgoing
                 $filename = basename($filePath);
-                Storage::disk('public')->put("path/to/outgoing/{$filename}", $xmlFinal);
+                Storage::disk('integrations')->put("path/to/outgoing/{$filename}", $xmlFinal);
             }
         }
     }

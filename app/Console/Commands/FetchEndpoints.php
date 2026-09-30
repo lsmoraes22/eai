@@ -82,7 +82,8 @@ class FetchEndpoints extends Command
             try {
                 $success = $this->processEndpointLocked($endpoint);
             } catch (\Throwable $e) {
-                $this->error("   ❌ Erro inesperado no processamento: " . $e->getMessage());
+                $this->error("   ❌ Erro inesperado no processamento: " . $e::class
+                . ($e instanceof \Illuminate\Http\Client\RequestException ? ' HTTP ' . $e->response->status() : ''));
                 $success = false;
             }
 
@@ -171,7 +172,7 @@ class FetchEndpoints extends Command
             }
 
             if (!$response->successful()) {
-                $this->error("   ❌ Falha HTTP [{$response->status()}] para {$endpoint->url}");
+                $this->error("   ❌ Falha HTTP [{$response->status()}] para endpoint ID {$endpoint->id}");
                 return false;
             }
 
@@ -179,7 +180,8 @@ class FetchEndpoints extends Command
             return $this->saveResponse($endpoint, $clientCode, $response, $format);
 
         } catch (\Exception $e) {
-            $this->error("   ❌ Erro crítico na requisição: " . $e->getMessage());
+            $this->error("   ❌ Erro crítico na requisição: " . $e::class
+                . ($e instanceof \Illuminate\Http\Client\RequestException ? ' HTTP ' . $e->response->status() : ''));
             return false;
         }
     }
@@ -260,12 +262,13 @@ class FetchEndpoints extends Command
                     }
                 }
             } catch (\Exception $e) {
-                $this->error("   ❌ Erro crítico na página {$requestedPage}: " . $e->getMessage());
+                $this->error("   ❌ Erro crítico na página {$requestedPage}: " . $e::class
+                . ($e instanceof \Illuminate\Http\Client\RequestException ? ' HTTP ' . $e->response->status() : ''));
                 return false;
             }
 
             if (!$response->successful()) {
-                $this->error("   ❌ Falha HTTP [{$response->status()}] na página {$requestedPage} para {$endpoint->url}");
+                $this->error("   ❌ Falha HTTP [{$response->status()}] na página {$requestedPage} para endpoint ID {$endpoint->id}");
                 return false;
             }
 
@@ -333,7 +336,8 @@ class FetchEndpoints extends Command
                 $this->line("   📅 Próxima execução: {$endpoint->next_run->format('H:i:s')}");
             }
         } catch (\Exception $e) {
-            $this->error("   ❌ Erro ao agendar: " . $e->getMessage());
+            $this->error("   ❌ Erro ao agendar: " . $e::class
+                . ($e instanceof \Illuminate\Http\Client\RequestException ? ' HTTP ' . $e->response->status() : ''));
         }
     }
 
@@ -392,8 +396,8 @@ class FetchEndpoints extends Command
         $endpointSlug = Str::slug($endpoint->nome);
         $path = "token/{$clientCode}/{$endpointSlug}/auth.txt";
 
-        if (Storage::disk('public')->exists($path)) {
-            return $this->extractToken(Storage::disk('public')->get($path), $endpoint->auth_token, $path);
+        if (Storage::disk('integrations')->exists($path)) {
+            return $this->extractToken(Storage::disk('integrations')->get($path), $endpoint->auth_token, $path);
         }
 
         return null;
@@ -421,7 +425,7 @@ class FetchEndpoints extends Command
     private function validateTokenValue($token, string $path): ?string
     {
         if ($token === null || is_array($token) || is_object($token)) {
-            $this->error("   ❌ Token ausente ou não escalar em storage/app/public/{$path}");
+            $this->error("   ❌ Token ausente ou não escalar em storage/app/private/integrations/{$path}");
             return null;
         }
 
@@ -450,18 +454,18 @@ class FetchEndpoints extends Command
             $filename ??= now()->format('YmdHisv') . '.' .  $format;
             $directory = "polling/{$clientCode}/{$endpointExt}/{$direcao}/{$endpointSlug}/raw";
 	}
-        Storage::disk('public')->makeDirectory($directory);
+        Storage::disk('integrations')->makeDirectory($directory);
 
         $path = "{$directory}/{$filename}";
         $response_body = $response->body();
-        $saved = Storage::disk('public')->put($path, $response_body);
+        $saved = Storage::disk('integrations')->put($path, $response_body);
 
         if (!$saved) {
-            $this->error("   ❌ Falha ao salvar: storage/app/public/{$path}");
+            $this->error("   ❌ Falha ao salvar: storage/app/private/integrations/{$path}");
             return false;
         }
 
-        $this->info("Salvo: storage/app/public/{$path}");
+        $this->info("Salvo: storage/app/private/integrations/{$path}");
 
         // Registro de Status
         CadInterfaceStatus::create([

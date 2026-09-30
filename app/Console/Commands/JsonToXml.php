@@ -37,13 +37,13 @@ class JsonToXml extends Command
                     $validatedPath = "{$origem}/{$clientCode}/json/incoming/{$processName}/validated/";
                     $outgoingPath  = "{$origem}/{$clientCode}/xml/outgoing/{$processName}/raw/";
 
-                    Storage::disk('public')->makeDirectory($validatedPath);
-                    Storage::disk('public')->makeDirectory($outgoingPath);
+                    Storage::disk('integrations')->makeDirectory($validatedPath);
+                    Storage::disk('integrations')->makeDirectory($outgoingPath);
 
-                    $files = Storage::disk('public')->files($validatedPath);
+                    $files = Storage::disk('integrations')->files($validatedPath);
 
                     foreach ($files as $filePath) {
-                        $jsonContent = Storage::disk('public')->get($filePath);
+                        $jsonContent = Storage::disk('integrations')->get($filePath);
                         $jsonArray = json_decode($jsonContent, true);
 
                         if (json_last_error() !== JSON_ERROR_NONE) {
@@ -81,12 +81,12 @@ class JsonToXml extends Command
                         ]);
 
                         // Grava XML final
-                        Storage::disk('public')->put("{$outgoingPath}/{$filename}", $xml);
+                        Storage::disk('integrations')->put("{$outgoingPath}/{$filename}", $xml);
 
                         // Move JSON original para processed
                         $targetPath = str_replace('/validated/', '/processed/', $filePath);
-                        Storage::disk('public')->makeDirectory(dirname($targetPath));
-                        Storage::disk('public')->move($filePath, $targetPath);
+                        Storage::disk('integrations')->makeDirectory(dirname($targetPath));
+                        Storage::disk('integrations')->move($filePath, $targetPath);
 
                         $this->info("Convertido [{$origem}]: {$filePath} → {$filename}");
                     }

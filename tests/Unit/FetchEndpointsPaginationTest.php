@@ -9,7 +9,7 @@ use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Facades\Storage;
 
-uses(Tests\TestCase::class);
+uses(Tests\UnitTestCase::class);
 
 function pagePagination(array $overrides = []): array
 {
@@ -74,7 +74,7 @@ beforeEach(function () {
     config(['cache.default' => 'array']);
     Cache::setDefaultDriver('array');
     Cache::flush();
-    Storage::fake('public');
+    Storage::fake('integrations');
 
     Schema::create('clients', function (Blueprint $table) {
         $table->id();
@@ -135,7 +135,7 @@ test('an endpoint without pagination keeps the single request behavior', functio
 
     Http::assertSentCount(1);
     Http::assertSent(fn ($request) => !isset(requestQuery($request)['page']) && !isset(requestQuery($request)['size']));
-    $files = Storage::disk('public')->files(paginationRawDirectory($endpoint));
+    $files = Storage::disk('integrations')->files(paginationRawDirectory($endpoint));
     expect($files)->toHaveCount(1)
         ->and(basename($files[0]))->not->toContain('-page-');
 })->with([
@@ -156,7 +156,7 @@ test('a paginated auth endpoint is rejected before http and releases its lock', 
         ->assertExitCode(0);
 
     Http::assertNothingSent();
-    Storage::disk('public')->assertMissing("token/{$endpoint->client->code}/{$endpoint->nome}/auth.txt");
+    Storage::disk('integrations')->assertMissing("token/{$endpoint->client->code}/{$endpoint->nome}/auth.txt");
     expect($endpoint->refresh()->next_run->toDateTimeString())->toBe('2026-09-01 10:12:00');
     $nextLock = Cache::lock("eai:fetch-endpoint:{$endpoint->id}", 900);
     expect($nextLock->get())->toBeTrue();
@@ -176,7 +176,7 @@ test('an auth endpoint without pagination keeps saving auth txt', function () {
     $this->artisan('app:fetch-endpoints', ['--id' => $endpoint->id])->assertExitCode(0);
 
     Http::assertSentCount(1);
-    expect(Storage::disk('public')->get(
+    expect(Storage::disk('integrations')->get(
         "token/{$endpoint->client->code}/auth-token/auth.txt"
     ))->toBe($body)
         ->and($endpoint->refresh()->next_run->toDateTimeString())->toBe('2026-09-01 10:30:00');
@@ -191,10 +191,10 @@ test('one page sends configured defaults and saves one raw', function () {
 
     Http::assertSent(fn ($request) => requestQuery($request)['page'] === '1'
         && requestQuery($request)['size'] === '100');
-    $files = Storage::disk('public')->files(paginationRawDirectory($endpoint));
+    $files = Storage::disk('integrations')->files(paginationRawDirectory($endpoint));
     expect($files)->toHaveCount(1)
         ->and(basename($files[0]))->toBe('20260901100700123-page-000001.json')
-        ->and(Storage::disk('public')->get($files[0]))->toBe($body);
+        ->and(Storage::disk('integrations')->get($files[0]))->toBe($body);
 });
 
 test('a missing null or empty location defaults to query', function (array $pagination) {
@@ -296,14 +296,14 @@ test('three pages make distinct requests and preserve each raw byte for byte', f
     $this->artisan('app:fetch-endpoints', ['--id' => $endpoint->id])->assertExitCode(0);
 
     expect($requested)->toBe([1, 2, 3]);
-    $files = Storage::disk('public')->files(paginationRawDirectory($endpoint));
+    $files = Storage::disk('integrations')->files(paginationRawDirectory($endpoint));
     expect(array_map('basename', $files))->toBe([
         '20260901100700123-page-000001.json',
         '20260901100700123-page-000002.json',
         '20260901100700123-page-000003.json',
     ]);
     foreach ($files as $index => $file) {
-        expect(Storage::disk('public')->get($file))->toBe($bodies[$index + 1]);
+        expect(Storage::disk('integrations')->get($file))->toBe($bodies[$index + 1]);
     }
 });
 
@@ -345,7 +345,7 @@ test('page start and metadata paths are configurable', function () {
     $this->artisan('app:fetch-endpoints', ['--id' => $endpoint->id])->assertExitCode(0);
 
     Http::assertSent(fn ($request) => requestQuery($request)['page'] === '5');
-    expect(basename(Storage::disk('public')->files(paginationRawDirectory($endpoint))[0]))
+    expect(basename(Storage::disk('integrations')->files(paginationRawDirectory($endpoint))[0]))
         ->toBe('20260901100700123-page-000005.json');
 });
 
@@ -364,7 +364,7 @@ test('an intermediate http failure stops collection and keeps previous raws', fu
     $this->artisan('app:fetch-endpoints', ['--id' => $endpoint->id])->assertExitCode(0);
 
     expect($requested)->toBe([1, 2])
-        ->and(Storage::disk('public')->files(paginationRawDirectory($endpoint)))->toHaveCount(1)
+        ->and(Storage::disk('integrations')->files(paginationRawDirectory($endpoint)))->toHaveCount(1)
         ->and($endpoint->refresh()->next_run->toDateTimeString())->toBe('2026-09-01 10:12:00');
 });
 
@@ -384,7 +384,7 @@ test('an intermediate transport exception stops collection and releases the lock
     $this->artisan('app:fetch-endpoints', ['--id' => $endpoint->id])->assertExitCode(0);
 
     expect($requested)->toBe([1, 2])
-        ->and(Storage::disk('public')->files(paginationRawDirectory($endpoint)))->toHaveCount(1)
+        ->and(Storage::disk('integrations')->files(paginationRawDirectory($endpoint)))->toHaveCount(1)
         ->and($endpoint->refresh()->next_run->toDateTimeString())->toBe('2026-09-01 10:12:00');
     $nextLock = Cache::lock("eai:fetch-endpoint:{$endpoint->id}", 900);
     expect($nextLock->get())->toBeTrue();
@@ -400,8 +400,8 @@ test('invalid json is saved before pagination fails', function () {
         ->expectsOutputToContain('não contém JSON válido')
         ->assertExitCode(0);
 
-    $file = Storage::disk('public')->files(paginationRawDirectory($endpoint))[0];
-    expect(Storage::disk('public')->get($file))->toBe($body)
+    $file = Storage::disk('integrations')->files(paginationRawDirectory($endpoint))[0];
+    expect(Storage::disk('integrations')->get($file))->toBe($body)
         ->and($endpoint->refresh()->next_run->toDateTimeString())->toBe('2026-09-01 10:12:00');
 });
 
@@ -431,7 +431,7 @@ test('missing or non numeric metadata fails in a controlled way', function (arra
         ->assertExitCode(0);
 
     Http::assertSentCount(1);
-    expect(Storage::disk('public')->files(paginationRawDirectory($endpoint)))->toHaveCount(1)
+    expect(Storage::disk('integrations')->files(paginationRawDirectory($endpoint)))->toHaveCount(1)
         ->and($endpoint->refresh()->next_run->toDateTimeString())->toBe('2026-09-01 10:12:00');
 })->with([
     'current path missing' => [[], '{"meta":{"totalPages":1}}'],
@@ -480,14 +480,14 @@ test('max pages stops before requesting beyond the configured limit', function (
         ->assertExitCode(0);
 
     expect($requested)->toBe([1, 2])
-        ->and(Storage::disk('public')->files(paginationRawDirectory($endpoint)))->toHaveCount(2)
+        ->and(Storage::disk('integrations')->files(paginationRawDirectory($endpoint)))->toHaveCount(2)
         ->and($endpoint->refresh()->next_run->toDateTimeString())->toBe('2026-09-01 10:12:00');
 });
 
 test('a storage failure on an intermediate page stops collection', function () {
     $endpoint = createPaginationEndpoint();
     $directory = paginationRawDirectory($endpoint);
-    $realDisk = Storage::disk('public');
+    $realDisk = Storage::disk('integrations');
     $putCalls = 0;
     $disk = Mockery::mock($realDisk);
     $disk->shouldReceive('put')->twice()->andReturnUsing(function ($path, $body) use ($realDisk, &$putCalls) {
@@ -495,7 +495,7 @@ test('a storage failure on an intermediate page stops collection', function () {
 
         return $putCalls === 1 ? $realDisk->put($path, $body) : false;
     });
-    Storage::shouldReceive('disk')->with('public')->andReturn($disk);
+    Storage::shouldReceive('disk')->with('integrations')->andReturn($disk);
     Http::fake(function ($request) {
         $page = (int) requestQuery($request)['page'];
 

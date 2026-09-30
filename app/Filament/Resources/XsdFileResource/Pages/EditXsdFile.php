@@ -4,6 +4,9 @@ namespace App\Filament\Resources\XsdFileResource\Pages;
 
 use App\Filament\Resources\XsdFileResource;
 use Filament\Actions;
+use App\Models\Client;
+use Illuminate\Support\Str;
+use Illuminate\Support\Facades\Storage;
 use Filament\Resources\Pages\EditRecord;
 
 class EditXsdFile extends EditRecord
@@ -41,8 +44,8 @@ class EditXsdFile extends EditRecord
         $finalDir = "polling/{$clientCode}/xsd";
         $finalPath = "{$finalDir}/{$filename}";
 
-        Storage::disk('local')->makeDirectory($finalDir);
-        Storage::disk('local')->move($uploadedPath, $finalPath);
+        Storage::disk('integrations')->makeDirectory($finalDir);
+        Storage::disk('integrations')->move($uploadedPath, $finalPath);
 
         $data['filename'] = $filename;
         $data['path'] = $finalPath;
