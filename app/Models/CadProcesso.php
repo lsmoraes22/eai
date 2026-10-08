@@ -34,7 +34,7 @@ class CadProcesso extends Model
 
     public function txtLayout()
     {
-        return $this->hasMany(CadProcessoTxtLayout::class, 'layout_id');
+        return $this->hasMany(CadProcessoTxtLayout::class, 'processo_id');
     }
 
     public function processoDepara()
