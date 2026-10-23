@@ -11,6 +11,7 @@ use App\Models\CadEndpoint;
 use App\Models\CadInterfaceStatus;
 use Illuminate\Support\Str;
 use Carbon\Carbon;
+use App\Services\LinkedResources\ResourceCapture;
 
 class FetchEndpoints extends Command
 {
@@ -476,6 +477,12 @@ class FetchEndpoints extends Command
             'int_status'     => 0,
             'int_data_envio' => now(),
         ]);
+
+        // Opt-in only; preserve the raw response even when a capture fails.
+        if (!app(ResourceCapture::class)->discover($endpoint, $response_body, $path)) {
+            $this->error('   ❌ Captura de recurso pendente para endpoint ID ' . $endpoint->id);
+            return false;
+        }
 
         return true;
     }
