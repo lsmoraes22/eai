@@ -3,8 +3,6 @@
 namespace App\Console\Commands;
 
 use Illuminate\Console\Command;
-use Illuminate\Contracts\Encryption\DecryptException;
-use Illuminate\Support\Facades\Crypt;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
 use App\Models\Client;
@@ -39,31 +37,34 @@ class ValidateXmlCommand extends Command
                 $refusedPath   = "polling/{$clientCode}/{$endpointExt}/incoming/{$endpointName}/refused/";
 
                 // Garantir que existam
-                Storage::disk('public')->makeDirectory($validatedPath);
-                Storage::disk('public')->makeDirectory($refusedPath);
+                Storage::disk('integrations')->makeDirectory($validatedPath);
+                Storage::disk('integrations')->makeDirectory($refusedPath);
 
                 // Caminho do XSD
                 $xsdPath = "polling/{$clientCode}/xsd/{$ep->nome}.xsd";
 
-                if (!Storage::disk('public')->exists($xsdPath)) {
+                if (!Storage::disk('integrations')->exists($xsdPath)) {
                     $this->error("❌ XSD não encontrado para endpoint {$ep->name}");
                     continue;
                 }
 
+                if (Storage::disk('integrations')->files($incomingPath) === []) {
+                    try {
+                        app(\App\Services\LegacyIntegrationStorage::class)->importDirectory($incomingPath, true);
+                    } catch (\Throwable) {
+                        $this->error('Falha ao importar arquivo legado para validação privada.');
+                        continue;
+                    }
+                }
+
                 // Listar XMLs brutos
-                $sourceDisk = Storage::disk('local')->files($incomingPath) ? 'local' : 'public';
-                $xmlFiles = Storage::disk($sourceDisk)->files($incomingPath);
+                $xmlFiles = Storage::disk('integrations')->files($incomingPath);
                 foreach ($xmlFiles as $xmlFile) {
 
                     if (!str_ends_with($xmlFile, '.xml')) continue;
 
                     $filename = basename($xmlFile);
-                    $xmlContent = $this->readRawFile($sourceDisk, $xmlFile);
-
-                    if ($xmlContent === null) {
-                        $this->error("❌ XML criptografado inválido: {$filename}");
-                        continue;
-                    }
+                    $xmlContent = Storage::disk('integrations')->get($xmlFile);
 
 		    // Extrair conteúdo interno
 		    $xmlService = new \App\Services\XmlService();
@@ -77,7 +78,7 @@ class ValidateXmlCommand extends Command
                     $dom->loadXML($payload);
 
                     libxml_use_internal_errors(true);
-                    $isValid = $dom->schemaValidate(Storage::disk('public')->path($xsdPath));
+                    $isValid = $dom->schemaValidate(Storage::disk('integrations')->path($xsdPath));
                     $errors = libxml_get_errors();
                     libxml_clear_errors();
 
@@ -92,7 +93,7 @@ class ValidateXmlCommand extends Command
                     // VALIDADO
                     if ($isValid) {
 
-	                        $this->moveRawFile($xmlFile, $validatedPath . $filename, $sourceDisk, $xmlContent);
+                        Storage::disk('integrations')->move($xmlFile, $validatedPath . $filename);
                         $cad->int_mensagem = "OK";
 		    	if ($xmlService->message) {
     			    // Você pode guardar isso no cad_interface_status
@@ -108,7 +109,7 @@ class ValidateXmlCommand extends Command
                     // RECUSADO
                     else {
 
-	                        $this->moveRawFile($xmlFile, $refusedPath . $filename, $sourceDisk, $xmlContent);
+                        Storage::disk('integrations')->move($xmlFile, $refusedPath . $filename);
 
                         $msg = '';
                         foreach ($errors as $err) {
@@ -121,35 +122,9 @@ class ValidateXmlCommand extends Command
 
                         $this->error("❌ RECUSADO: {$filename}");
                         $this->line($msg);
-		    }
+                    }
                 }
             }
         }
     }
-
-    private function readRawFile(string $disk, string $file): ?string
-    {
-        $content = Storage::disk($disk)->get($file);
-
-        if ($disk !== 'local') {
-            return $content;
-        }
-
-        try {
-            return Crypt::decryptString($content);
-        } catch (DecryptException $e) {
-            return null;
-        }
-    }
-
-    private function moveRawFile(string $from, string $to, string $sourceDisk, string $content): void
-    {
-        if ($sourceDisk === 'public') {
-            Storage::disk('public')->move($from, $to);
-            return;
-        }
-
-        Storage::disk('public')->put($to, $content);
-        Storage::disk('local')->delete($from);
-	}
 }

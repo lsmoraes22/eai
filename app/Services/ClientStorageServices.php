@@ -6,7 +6,7 @@ use Illuminate\Support\Facades\Storage;
 
 class ClientStorageServices
 {
-    private string $base = 'public/clients';
+    private string $base = 'clients';
 
     /**
      * Cria a pasta do cliente se não existir.
@@ -14,8 +14,8 @@ class ClientStorageServices
     public function ensureClientDir(string $clientId): void
     {
         $path = "{$this->base}/{$clientId}";
-        if (!Storage::exists($path)) {
-            Storage::makeDirectory($path);
+        if (!Storage::disk('integrations')->exists($path)) {
+            Storage::disk('integrations')->makeDirectory($path);
         }
     }
 
@@ -27,7 +27,7 @@ class ClientStorageServices
         $this->ensureClientDir($clientId);
 
         $path = "{$this->base}/{$clientId}/{$filename}";
-        Storage::put($path, $content);
+        Storage::disk('integrations')->put($path, $content);
 
         return $path;
     }
@@ -38,7 +38,7 @@ class ClientStorageServices
     public function listFiles(string $clientId): array
     {
         $path = "{$this->base}/{$clientId}";
-        return Storage::files($path);
+        return Storage::disk('integrations')->files($path);
     }
 
     /**
@@ -47,7 +47,7 @@ class ClientStorageServices
     public function getFile(string $clientId, string $filename): ?string
     {
         $path = "{$this->base}/{$clientId}/{$filename}";
-        return Storage::exists($path) ? Storage::get($path) : null;
+        return Storage::disk('integrations')->exists($path) ? Storage::disk('integrations')->get($path) : null;
     }
 
     /**
@@ -56,7 +56,7 @@ class ClientStorageServices
     public function deleteFile(string $clientId, string $filename): bool
     {
         $path = "{$this->base}/{$clientId}/{$filename}";
-        return Storage::delete($path);
+        return Storage::disk('integrations')->delete($path);
     }
 
     /**
@@ -65,6 +65,6 @@ class ClientStorageServices
     public function deleteClientDir(string $clientId): bool
     {
         $path = "{$this->base}/{$clientId}";
-        return Storage::deleteDirectory($path);
+        return Storage::disk('integrations')->deleteDirectory($path);
     }
 }

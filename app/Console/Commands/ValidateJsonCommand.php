@@ -3,8 +3,7 @@
 namespace App\Console\Commands;
 
 use Illuminate\Console\Command;
-use Illuminate\Contracts\Encryption\DecryptException;
-use Illuminate\Support\Facades\Crypt;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
 use App\Models\Client;
@@ -14,6 +13,9 @@ use JsonSchema\Validator;
 
 class ValidateJsonCommand extends Command
 {
+    // A região crítica protege somente a transição de um arquivo no Storage.
+    private const TARGET_LOCK_TTL_SECONDS = 60;
+
     protected $signature = 'app:validate-json';
     protected $description = 'Valida os JSONs usando JSON Schema';
 
@@ -28,91 +30,162 @@ class ValidateJsonCommand extends Command
                 ->get();
 
             foreach ($endpoints as $ep) {
+                $endpointSlug = Str::slug($ep->nome);
                 // Diretórios (Seguindo seu padrão de XML)
-                $incomingPath  = "polling/{$clientCode}/json/incoming/{$ep->nome}/raw/";
-                $validatedPath = "polling/{$clientCode}/json/incoming/{$ep->nome}/validated/";
-                $refusedPath   = "polling/{$clientCode}/json/incoming/{$ep->nome}/refused/";
-                $schemaPath    = "polling/{$clientCode}/schema/{$ep->nome}.json";
+                $incomingPath  = "polling/{$clientCode}/json/incoming/{$endpointSlug}/raw/";
+                $validatedPath = "polling/{$clientCode}/json/incoming/{$endpointSlug}/validated/";
+                $refusedPath   = "polling/{$clientCode}/json/incoming/{$endpointSlug}/refused/";
+                $schemaPath    = "polling/{$clientCode}/schema/{$endpointSlug}.json";
 
-                Storage::disk('public')->makeDirectory($validatedPath);
-                Storage::disk('public')->makeDirectory($refusedPath);
+                Storage::disk('integrations')->makeDirectory($validatedPath);
+                Storage::disk('integrations')->makeDirectory($refusedPath);
 
-                $sourceDisk = Storage::disk('local')->files($incomingPath) ? 'local' : 'public';
-                $files = Storage::disk($sourceDisk)->files($incomingPath);
-                foreach ($files as $file) {
-                    $rawContent = $this->readRawFile($sourceDisk, $file);
+                if (Storage::disk('integrations')->files($incomingPath) === []) {
+                    try {
+                        app(\App\Services\LegacyIntegrationStorage::class)->importDirectory($incomingPath, true);
+                    } catch (\Throwable) {
+                        $this->error('Falha ao importar arquivo legado para validação privada.');
+                        continue;
+                    }
+                }
 
-                    if ($rawContent === null) {
-                        $this->handleRefusal($file, $refusedPath, "Arquivo criptografado inválido", $sourceDisk, '');
+                $files = Storage::disk('integrations')->files($incomingPath);
+
+                if ($files === []) {
+                    continue;
+                }
+
+                try {
+                    if (!Storage::disk('integrations')->exists($schemaPath)) {
+                        $this->error("Schema ausente para o endpoint {$ep->nome}. Esperado: {$schemaPath}");
                         continue;
                     }
 
-                    $jsonContent = json_decode($rawContent);
+                    $schema = json_decode(
+                        Storage::disk('integrations')->get($schemaPath),
+                        false,
+                        512,
+                        JSON_THROW_ON_ERROR
+                    );
+                } catch (\JsonException $e) {
+                    $this->error("Schema JSON inválido para o endpoint {$ep->nome} em {$schemaPath}: {$e->getMessage()}");
+                    continue;
+                } catch (\Throwable $e) {
+                    // Boundary por endpoint: falhas operacionais ao ler o schema não
+                    // podem interromper a validação dos demais endpoints.
+                    $this->error("Falha ao carregar schema para o endpoint {$ep->nome} em {$schemaPath}: {$e->getMessage()}");
+                    continue;
+                }
 
-                    // Se o arquivo estiver mal formatado (Sintaxe)
-                    if (json_last_error() !== JSON_ERROR_NONE) {
-                        $this->handleRefusal($file, $refusedPath, "Erro de sintaxe JSON", $sourceDisk, $rawContent);
+                foreach ($files as $file) {
+                    try {
+                        $jsonContent = json_decode(
+                            Storage::disk('integrations')->get($file),
+                            false,
+                            512,
+                            JSON_THROW_ON_ERROR
+                        );
+                    } catch (\JsonException $e) {
+                        $this->handleRefusal($file, $refusedPath, 'Erro de sintaxe JSON');
+                        continue;
+                    } catch (\Throwable $e) {
+                        // Boundary por arquivo para isolar falhas do Storage.
+                        $this->error('Falha ao ler JSON ' . basename($file) . ': ' . $e->getMessage());
                         continue;
                     }
 
                     // Validação Estrutural (Schema)
                     $validator = new Validator();
-                    if (Storage::disk('public')->exists($schemaPath)) {
-                        $schema = json_decode(Storage::disk('public')->get($schemaPath));
+
+                    try {
                         $validator->validate($jsonContent, $schema);
+                    } catch (\Throwable $e) {
+                        // A biblioteca pode lançar tanto exceções próprias quanto SPL
+                        // para schemas inválidos; o boundary mantém o RAW reprocessável.
+                        $this->error('Falha no schema ao validar ' . basename($file) . ': ' . $e->getMessage());
+                        continue;
                     }
 
                     if ($validator->isValid()) {
-                        $this->handleSuccess($file, $validatedPath, $sourceDisk, $rawContent);
+                        $this->handleSuccess($file, $validatedPath);
                     } else {
                         $errors = "";
                         foreach ($validator->getErrors() as $error) {
                             $errors .= sprintf("[%s] %s. ", $error['property'], $error['message']);
                         }
-                        $this->handleRefusal($file, $refusedPath, $errors, $sourceDisk, $rawContent);
+                        $this->handleRefusal($file, $refusedPath, $errors);
                     }
                 }
             }
         }
     }
 
-    private function handleSuccess($file, $path, string $sourceDisk, string $content) {
-        $filename = basename($file);
-        $this->moveRawFile($file, $path . $filename, $sourceDisk, $content);
-        CadInterfaceStatus::where('int_arquivo', $filename)->update(['int_status' => 1, 'int_mensagem' => 'OK']);
-        $this->info("✔ JSON VALIDADO: {$filename}");
-    }
-
-    private function handleRefusal($file, $path, $msg, string $sourceDisk, string $content) {
-        $filename = basename($file);
-        $this->moveRawFile($file, $path . $filename, $sourceDisk, $content);
-        CadInterfaceStatus::where('int_arquivo', $filename)->update(['int_status' => 2, 'int_mensagem' => $msg]);
-        $this->error("❌ JSON RECUSADO: {$filename} - {$msg}");
-    }
-
-    private function readRawFile(string $disk, string $file): ?string
+    private function handleSuccess($file, $path): bool
     {
-        $content = Storage::disk($disk)->get($file);
+        return $this->moveAndUpdateStatus(
+            $file,
+            $path,
+            1,
+            'OK',
+            '✔ JSON VALIDADO'
+        );
+    }
 
-        if ($disk !== 'local') {
-            return $content;
+    private function handleRefusal($file, $path, $msg): bool
+    {
+        return $this->moveAndUpdateStatus(
+            $file,
+            $path,
+            2,
+            $msg,
+            '❌ JSON RECUSADO'
+        );
+    }
+
+    private function moveAndUpdateStatus(string $file, string $path, int $status, string $message, string $label): bool
+    {
+        $filename = basename($file);
+        $target = $path . $filename;
+        $lock = Cache::lock(
+            'eai:validate-target:' . hash('sha256', $target),
+            self::TARGET_LOCK_TTL_SECONDS
+        );
+
+        if (!$lock->get()) {
+            $this->error("Falha ao mover {$filename}: destino em processamento ({$target})");
+            return false;
         }
 
         try {
-            return Crypt::decryptString($content);
-        } catch (DecryptException $e) {
-            return null;
-        }
-    }
+            if (Storage::disk('integrations')->exists($target)) {
+                $this->error("Falha ao mover {$filename}: destino já existe ({$target})");
+                return false;
+            }
 
-    private function moveRawFile(string $from, string $to, string $sourceDisk, string $content): void
-    {
-        if ($sourceDisk === 'public') {
-            Storage::disk('public')->move($from, $to);
-            return;
-        }
+            if (!Storage::disk('integrations')->move($file, $target)) {
+                $this->error("Falha ao mover {$filename} para {$target}");
+                return false;
+            }
 
-        Storage::disk('public')->put($to, $content);
-        Storage::disk('local')->delete($from);
+            CadInterfaceStatus::where('int_arquivo', $filename)->update([
+                'int_status' => $status,
+                'int_mensagem' => $message,
+            ]);
+
+            if ($status === 1) {
+                $this->info("{$label}: {$filename}");
+            } else {
+                $this->error("{$label}: {$filename} - {$message}");
+            }
+
+            return true;
+        } catch (\Throwable $e) {
+            // Boundary da transição: uma falha de Storage não bloqueia os demais
+            // arquivos e nunca atualiza status antes de um move confirmado.
+            $this->error("Falha ao mover {$filename} para {$target}: {$e->getMessage()}");
+            return false;
+        } finally {
+            $lock->release();
+        }
     }
 }

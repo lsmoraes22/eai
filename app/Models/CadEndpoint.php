@@ -13,13 +13,15 @@ class CadEndpoint extends Model
         'nome', 'tipo', 'metodo', 'client_id', 'url', 'extensao', 'namespace',
 	'headers', 'autenticacao', 'auth_user', 'direcao', 'timer', 'next_run',
 	'type_storage_token', 'auth_pass', 'auth_token', 'ativo', 'timeout',
-	'tentativas', 'descricao', 'payload', 'auth_api_way'
+	'tentativas', 'descricao', 'payload', 'auth_api_way',
+	'pagination',
     ];
 
     protected $casts = [
         'headers' => 'array',
         'ativo' => 'boolean',
-	    'next_run' => 'datetime',
+	'next_run' => 'datetime',
+	'pagination' => 'array',
     ];
 
     /**
@@ -53,9 +55,14 @@ class CadEndpoint extends Model
         return $nextRun;
     }
 
-    public function processo()
+    public function inputProcesses()
     {
-        return $this->hasMany(CadProcesso::class);
+        return $this->hasMany(CadProcesso::class, 'input_endpoint_id');
+    }
+
+    public function outputProcesses()
+    {
+        return $this->hasMany(CadProcesso::class, 'output_endpoint_id');
     }
 
     public function client()

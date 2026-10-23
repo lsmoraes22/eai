@@ -1,7 +1,8 @@
 <?php
 
 use App\Models\Client;
-use Illuminate\Support\Facades\Cache;
+use App\Models\User;
+use Spatie\Permission\Models\Permission;
 use Illuminate\Support\Facades\Http;
 
 function createOAuthClient(array $overrides = []): Client
@@ -13,15 +14,32 @@ function createOAuthClient(array $overrides = []): Client
         'endereco' => 'Rua Teste',
         'cnpj' => '00000000000000',
         'active' => true,
+        'auth_url' => 'https://provider.test/authorize',
         'token_url' => 'https://provider.test/token',
         'app_client_id' => 'client-id',
         'app_client_secret' => 'client-secret',
     ], $overrides));
 }
 
+beforeEach(function () {
+    $user = User::factory()->create();
+    Permission::findOrCreate('update_client', 'web');
+    $user->givePermissionTo('update_client');
+    $this->actingAs($user);
+    Http::preventStrayRequests();
+});
+
+function callbackState($test, Client $client): string
+{
+    $response = $test->get(route('oauth.authorize', $client));
+    $response->assertRedirect();
+    parse_str(parse_url($response->headers->get('Location'), PHP_URL_QUERY), $query);
+    return $query['state'];
+}
+
 test('oauth callback does not expose provider response body on token exchange failure', function () {
     $client = createOAuthClient();
-    $state = $client->generateOAuthState();
+    $state = callbackState($this, $client);
 
     Http::fake([
         '*' => Http::response([
@@ -35,7 +53,7 @@ test('oauth callback does not expose provider response body on token exchange fa
 
     $response
         ->assertStatus(502)
-        ->assertJson(['error' => 'Falha na comunicação com o Bling'])
+        ->assertJson(['error' => 'Falha na autorização com o provedor.'])
         ->assertDontSee('sensitive-token-from-provider')
         ->assertDontSee('sensitive-refresh-token-from-provider');
 });
@@ -44,7 +62,7 @@ test('oauth callback rejects insecure token urls before sending a request', func
     $client = createOAuthClient([
         'token_url' => 'http://provider.test/token',
     ]);
-    $state = $client->generateOAuthState();
+    $state = callbackState($this, $client);
 
     Http::fake();
 
@@ -55,12 +73,12 @@ test('oauth callback rejects insecure token urls before sending a request', func
         ->assertJson(['error' => 'Configuração OAuth inválida.']);
 
     Http::assertNothingSent();
-    expect(Cache::has(Client::oauthStateCacheKey($state)))->toBeTrue();
+    expect(session('oauth_attempts.'.hash('sha256', $state)))->toBeNull();
 });
 
 test('oauth callback succeeds when state is valid', function () {
     $client = createOAuthClient();
-    $state = $client->generateOAuthState();
+    $state = callbackState($this, $client);
 
     Http::fake([
         '*' => Http::response([
@@ -78,7 +96,7 @@ test('oauth callback succeeds when state is valid', function () {
     expect($client->refresh()->access_token)->toBe('new-access-token')
         ->and($client->refresh_token)->toBe('new-refresh-token');
 
-    expect(Cache::has(Client::oauthStateCacheKey($state)))->toBeFalse();
+    expect(session('oauth_attempts.'.hash('sha256', $state)))->toBeNull();
 });
 
 test('oauth callback rejects missing state', function () {
@@ -89,8 +107,7 @@ test('oauth callback rejects missing state', function () {
     $response = $this->get("/token/{$client->id}?code=auth-code");
 
     $response
-        ->assertStatus(419)
-        ->assertJson(['error' => 'State OAuth inválido ou expirado.']);
+        ->assertForbidden();
 
     Http::assertNothingSent();
 });
@@ -101,43 +118,42 @@ test('oauth callback rejects mismatched state', function () {
         'code' => 'outro-cliente',
         'cnpj' => '11111111111111',
     ]);
-    $state = $otherClient->generateOAuthState();
+    $state = callbackState($this, $otherClient);
 
     Http::fake();
 
     $response = $this->get("/token/{$client->id}?code=auth-code&state={$state}");
 
     $response
-        ->assertStatus(419)
-        ->assertJson(['error' => 'State OAuth inválido ou expirado.']);
+        ->assertForbidden();
 
     Http::assertNothingSent();
 });
 
 test('oauth callback rejects expired state', function () {
     $client = createOAuthClient();
-    $state = 'expired-state';
-
-    Cache::put(Client::oauthStateCacheKey($state), $client->id, now()->subMinute());
+    $state = callbackState($this, $client);
+    $attempts = session('oauth_attempts');
+    $attempts[hash('sha256', $state)]['expires_at'] = time() - 1;
+    $this->withSession(['oauth_attempts' => $attempts]);
     Http::fake();
 
     $response = $this->get("/token/{$client->id}?code=auth-code&state={$state}");
 
     $response
-        ->assertStatus(419)
-        ->assertJson(['error' => 'State OAuth inválido ou expirado.']);
+        ->assertForbidden();
 
     Http::assertNothingSent();
 });
 
-test('oauth callback keeps valid state after provider failure for retry', function () {
+test('oauth callback consumes state after provider failure and requires a fresh authorization', function () {
     $client = createOAuthClient();
-    $state = $client->generateOAuthState();
+    $state = callbackState($this, $client);
 
     Http::fake(['*' => Http::response(['error' => 'temporarily_unavailable'], 503)]);
 
     $this->get("/token/{$client->id}?code=auth-code&state={$state}")
         ->assertStatus(502);
 
-    expect(Cache::has(Client::oauthStateCacheKey($state)))->toBeTrue();
+    expect(session('oauth_attempts.'.hash('sha256', $state)))->toBeNull();
 });

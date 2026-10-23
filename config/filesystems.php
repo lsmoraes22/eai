@@ -30,6 +30,16 @@ return [
 
     'disks' => [
 
+        // Internal integration documents and credentials must never have a public URL.
+        'integrations' => [
+            'driver' => 'local',
+            'root' => storage_path('app/private/integrations'),
+            'visibility' => 'private',
+            'directory_visibility' => 'private',
+            'serve' => false,
+            'throw' => false,
+        ],
+
         'local' => [
             'driver' => 'local',
             'root' => storage_path('app/private'),

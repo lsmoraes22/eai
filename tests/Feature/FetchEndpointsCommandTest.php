@@ -60,9 +60,10 @@ test('fetch endpoints blocks sensitive get payload before sending request', func
     ]);
 });
 
-test('fetch endpoints stores api responses on private encrypted disk', function () {
+test('fetch endpoints stores original api responses on the private integrations disk', function () {
     Storage::fake('public');
     Storage::fake('local');
+    Storage::fake('integrations');
 
     $client = createFetchClient();
     $endpoint = createFetchEndpoint($client);
@@ -76,16 +77,17 @@ test('fetch endpoints stores api responses on private encrypted disk', function 
 
     expect(Storage::disk('public')->allFiles())->toBeEmpty();
 
-    $files = Storage::disk('local')->allFiles();
+    $files = Storage::disk('integrations')->allFiles();
     expect($files)->toHaveCount(1);
 
-    $stored = Storage::disk('local')->get($files[0]);
-    expect($stored)->not->toContain('sensitive-response-token')
-        ->and(Crypt::decryptString($stored))->toContain('sensitive-response-token');
+    $stored = Storage::disk('integrations')->get($files[0]);
+    expect($stored)->toContain('sensitive-response-token');
+    expect(Storage::disk('local')->allFiles())->toBeEmpty();
 });
 
 test('fetch endpoints preserves json auth responses when storing them', function () {
     Storage::fake('local');
+    Storage::fake('integrations');
 
     $client = createFetchClient();
     $endpoint = createFetchEndpoint($client, [
@@ -98,7 +100,7 @@ test('fetch endpoints preserves json auth responses when storing them', function
 
     $this->artisan('app:fetch-endpoints', ['--id' => $endpoint->id])->assertExitCode(0);
 
-    $stored = Crypt::decryptString(Storage::disk('local')->get('token/cliente-fetch/auth-token/auth.txt'));
+    $stored = Storage::disk('integrations')->get('token/cliente-fetch/auth-token/auth.txt');
 
     expect(json_decode($stored, true))->toMatchArray([
         'access_token' => 'algar-token',
@@ -108,6 +110,7 @@ test('fetch endpoints preserves json auth responses when storing them', function
 
 test('fetch endpoints reads the default access_token from a json file', function () {
     Storage::fake('local');
+    Storage::fake('integrations');
 
     $client = createFetchClient();
     $endpoint = createFetchEndpoint($client, [
@@ -129,6 +132,7 @@ test('fetch endpoints reads the default access_token from a json file', function
 
 test('fetch endpoints reads a configured key from a json file', function () {
     Storage::fake('local');
+    Storage::fake('integrations');
 
     $client = createFetchClient();
     $endpoint = createFetchEndpoint($client, [
@@ -150,6 +154,7 @@ test('fetch endpoints reads a configured key from a json file', function () {
 
 test('fetch endpoints remains compatible with plain text and fixed tokens', function (string $storageType, string $expectedToken) {
     Storage::fake('local');
+    Storage::fake('integrations');
 
     $client = createFetchClient();
     $endpoint = createFetchEndpoint($client, [
@@ -174,6 +179,7 @@ test('fetch endpoints remains compatible with plain text and fixed tokens', func
 
 test('fetch endpoints rejects a non scalar token value', function () {
     Storage::fake('local');
+    Storage::fake('integrations');
 
     $client = createFetchClient();
     $endpoint = createFetchEndpoint($client, [
@@ -192,11 +198,12 @@ test('fetch endpoints rejects a non scalar token value', function () {
         ->expectsOutputToContain('Token ausente ou não escalar')
         ->assertExitCode(0);
 
-    Http::assertSent(fn ($request) => !$request->hasHeader('Authorization'));
+    Http::assertNothingSent();
 });
 
 test('fetch endpoints does not reprocess a successful idempotency key', function () {
     Storage::fake('local');
+    Storage::fake('integrations');
 
     $client = createFetchClient();
     $endpoint = createFetchEndpoint($client);
@@ -230,4 +237,26 @@ test('fetch endpoints marks repeated failures as dead', function () {
         'int_interface' => 'orders',
         'int_status' => 5,
     ]);
+});
+
+test('fetch deduplication only completes after every paginated page succeeds', function () {
+    $this->freezeTime();
+    Storage::fake('integrations');
+    $endpoint = createFetchEndpoint(createFetchClient(), [
+        'tentativas' => 1,
+        'pagination' => ['type' => 'page', 'current_page_path' => 'meta.page', 'total_pages_path' => 'meta.total'],
+    ]);
+    $failSecondPage = true;
+    Http::fake(function ($request) use (&$failSecondPage) {
+        parse_str(parse_url($request->url(), PHP_URL_QUERY), $query);
+        $page = (int) $query['page'];
+        return $page === 2 && $failSecondPage
+            ? Http::response([], 500)
+            : Http::response(['data' => [], 'meta' => ['page' => $page, 'total' => 2]]);
+    });
+    $this->artisan('app:fetch-endpoints', ['--id' => $endpoint->id])->assertExitCode(0);
+    $failSecondPage = false;
+    $this->artisan('app:fetch-endpoints', ['--id' => $endpoint->id])->assertExitCode(0);
+    $this->artisan('app:fetch-endpoints', ['--id' => $endpoint->id])->assertExitCode(0);
+    Http::assertSentCount(4);
 });

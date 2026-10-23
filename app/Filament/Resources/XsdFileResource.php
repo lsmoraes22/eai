@@ -40,6 +40,8 @@ class XsdFileResource extends Resource
                 Forms\Components\Textarea::make('description'),
 
                 Forms\Components\FileUpload::make('temp_file')
+                    ->disk('integrations')
+                    ->visibility('private')
                     ->label('Arquivo XSD')
                     ->directory('temp/xsd')
                     ->preserveFilenames()

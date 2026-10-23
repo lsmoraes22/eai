@@ -3,9 +3,7 @@
 namespace App\Console\Commands;
 
 use Illuminate\Console\Command;
-use Illuminate\Contracts\Encryption\DecryptException;
 use Illuminate\Support\Facades\Cache;
-use Illuminate\Support\Facades\Crypt;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Storage;
 use App\Models\Client;
@@ -13,14 +11,16 @@ use App\Models\CadEndpoint;
 use App\Models\CadInterfaceStatus;
 use Illuminate\Support\Str;
 use Carbon\Carbon;
+use App\Services\LinkedResources\ResourceCapture;
 
 class FetchEndpoints extends Command
 {
-    private const STATUS_PENDING = 0;
-    private const STATUS_SUCCESS = 1;
-    private const STATUS_FAILED = 2;
-    private const STATUS_PROCESSING = 3;
-    private const STATUS_DEAD = 5;
+    // Um endpoint normalmente usa até 3 tentativas de 30s. Quinze minutos
+    // dão margem conservadora sem deixar um lock órfão preso por muito tempo.
+    private const ENDPOINT_LOCK_TTL_SECONDS = 900;
+
+    private ?string $runKey = null;
+    private array $savedStatusIds = [];
 
     /**
      * O nome e a assinatura do comando.
@@ -29,9 +29,6 @@ class FetchEndpoints extends Command
     protected $signature = 'app:fetch-endpoints {--id=}';
 
     protected $description = 'Baixa arquivos XML/JSON dos endpoints agendados, lida com autenticação e salva no storage.';
-
-    // Extensões para busca de arquivos de autenticação legados
-    private $auth_extensions = ['json', 'xml', 'txt'];
 
     public function handle()
     {
@@ -75,44 +72,80 @@ class FetchEndpoints extends Command
      */
     private function processEndpoint(CadEndpoint $endpoint)
     {
-        $lock = Cache::lock("fetch-endpoint:{$endpoint->id}", (int) ($endpoint->timeout ?? 30) + 30);
+        $lock = Cache::lock(
+            "eai:fetch-endpoint:{$endpoint->id}",
+            self::ENDPOINT_LOCK_TTL_SECONDS
+        );
 
         if (!$lock->get()) {
-            $this->warn("   ⚠️ Endpoint ID {$endpoint->id} já está em processamento.");
+            $this->line("   ℹ️ Endpoint ID {$endpoint->id} já está em processamento. Pulando.");
             return;
         }
 
+        $this->runKey = null;
+        $this->savedStatusIds = [];
+
         try {
-            $this->processEndpointLocked($endpoint);
+            try {
+                $success = $this->processEndpointLocked($endpoint);
+            } catch (\Throwable $e) {
+                $this->error("   ❌ Erro inesperado no processamento: " . $e::class
+                . ($e instanceof \Illuminate\Http\Client\RequestException ? ' HTTP ' . $e->response->status() : ''));
+                $success = false;
+            }
+
+            if ($this->runKey !== null) {
+                if ($success && $this->savedStatusIds !== []) {
+                    // Only a fully completed collection is eligible for deduplication.
+                    CadInterfaceStatus::whereIn('int_id', $this->savedStatusIds)->update(['int_idoc' => $this->runKey]);
+                } elseif (!$success) {
+                    $failures = CadInterfaceStatus::where('int_idoc', $this->runKey)
+                        ->whereIn('int_status', [2, 5])->count();
+                    CadInterfaceStatus::create([
+                        'int_direcao' => strtolower($endpoint->direcao) === 'auth' ? 'auth' : 'entrada',
+                        'int_interface' => $endpoint->nome, 'int_arquivo' => null,
+                        'int_idoc' => $this->runKey,
+                        'int_status' => $failures + 1 >= (int) ($endpoint->tentativas ?? 3) ? 5 : 2,
+                        'int_data_envio' => now(),
+                    ]);
+                }
+            }
+            $this->updateNextRun($endpoint, $success);
         } finally {
             $lock->release();
         }
     }
 
-    private function processEndpointLocked(CadEndpoint $endpoint)
+    private function processEndpointLocked(CadEndpoint $endpoint): bool
     {
         $client = $endpoint->client;
         if (!$client) {
             $this->error("❌ Erro: Endpoint ID {$endpoint->id} não possui um Cliente vinculado.");
-            return;
+            return false;
         }
 
         $clientCode = $client->code ?: Str::slug($client->name);
         $this->info("👉 Processando: [{$client->name}] - {$endpoint->nome}");
 
-        // A. ATUALIZA PRÓXIMO AGENDAMENTO (Imediatamente para evitar sobreposição)
-        try {
-            $endpoint->next_run = $endpoint->timer==0 ? null : $endpoint->roundedTimestamp();
-            $endpoint->save();
-            if($endpoint->next_run){ $this->line("   📅 Próxima execução: {$endpoint->next_run->format('H:i:s')}"); }
-        } catch (\Exception $e) {
-            $this->error("   ❌ Erro ao agendar: " . $e->getMessage());
-            return;
-        }
-
         if (!$endpoint->url) {
             $this->warn("   ⚠️ Sem URL definida. Pulando.");
-            return;
+            return false;
+        }
+
+        $payload = is_array($endpoint->payload) ? $endpoint->payload : json_decode($endpoint->payload, true);
+        $method = strtolower($endpoint->metodo ?? 'get');
+        $this->runKey = $this->makeIdempotencyKey($endpoint, $client, $payload);
+        if (!$this->isAllowedMethod($method)) {
+            $this->error('   ❌ Método HTTP não permitido.');
+            return false;
+        }
+        if ($method === 'get' && $this->containsSensitivePayload($payload)) {
+            $this->error('   ❌ Payload sensível bloqueado em requisição GET. Use POST/PUT/PATCH.');
+            return false;
+        }
+        if (CadInterfaceStatus::where('int_idoc', $this->runKey)->whereNotNull('int_arquivo')->exists()) {
+            $this->comment('   ℹ️ Execução idempotente já concluída.');
+            return true;
         }
 
         // B. PREPARAÇÃO DE HEADERS E AUTENTICAÇÃO
@@ -120,7 +153,10 @@ class FetchEndpoints extends Command
         $format = strtolower($endpoint->extensao ?: 'json');
 
         // LÓGICA DE AUTENTICAÇÃO
-        $this->applyAuthentication($endpoint, $client, $headers);
+        if (!$this->applyAuthentication($endpoint, $client, $headers)) {
+            $this->error("   ❌ Não foi possível resolver a autenticação do endpoint.");
+            return false;
+        }
 
         // Define Accept default
         if (!isset($headers['Accept'])) {
@@ -131,28 +167,6 @@ class FetchEndpoints extends Command
         $method = strtolower($endpoint->metodo ?? 'get');
         $timeout = (int) ($endpoint->timeout ?? 30);
         $attempts = (int) ($endpoint->tentativas ?? 3);
-        $payload = is_array($endpoint->payload) ? $endpoint->payload : json_decode($endpoint->payload, true);
-
-        if (!$this->isAllowedMethod($method)) {
-            $this->recordStatus($endpoint, null, self::STATUS_FAILED, "Método HTTP não permitido: {$method}");
-            $this->error("   ❌ Método HTTP não permitido: {$method}");
-            return;
-        }
-
-        if ($method === 'get' && $this->containsSensitivePayload($payload)) {
-            $this->recordStatus($endpoint, null, self::STATUS_FAILED, 'Payload sensível bloqueado em requisição GET.');
-            $this->error('   ❌ Payload sensível bloqueado em requisição GET. Use POST/PUT/PATCH.');
-            return;
-        }
-
-        $idempotencyKey = $this->makeIdempotencyKey($endpoint, $client, $payload);
-
-        if ($this->hasSuccessfulRun($idempotencyKey)) {
-            $this->warn("   ⚠️ Execução idempotente já concluída: {$idempotencyKey}");
-            return;
-        }
-
-        $status = $this->recordStatus($endpoint, $idempotencyKey, self::STATUS_PROCESSING, 'Processamento iniciado.');
 
         try {
             $request = Http::withHeaders($headers)->timeout($timeout);
@@ -164,6 +178,30 @@ class FetchEndpoints extends Command
 
             $request->retry($attempts, 200, throw: false);
 
+            $payload = is_array($endpoint->payload) ? $endpoint->payload : json_decode($endpoint->payload, true);
+            $paginationType = strtolower($endpoint->pagination['type'] ?? 'none');
+
+            if ($paginationType === 'page') {
+                if (strtolower($endpoint->direcao) === 'auth') {
+                    $this->error('   ❌ Endpoints de autenticação não suportam paginação.');
+                    return false;
+                }
+
+                return $this->fetchPaginatedPages(
+                    $endpoint,
+                    $clientCode,
+                    $request,
+                    $method,
+                    $payload ?: [],
+                    $format
+                );
+            }
+
+            if (!in_array($paginationType, ['', 'none'], true)) {
+                $this->error("   ❌ Tipo de paginação não suportado: {$paginationType}.");
+                return false;
+            }
+
             // Determina se envia Body (Payload) ou Query Params
             if (in_array($method, ['post', 'put', 'patch'])) {
                 $response = $request->{$method}($endpoint->url, $payload ?: []);
@@ -173,28 +211,187 @@ class FetchEndpoints extends Command
             }
 
             if (!$response->successful()) {
-                $this->error("   ❌ Falha HTTP [{$response->status()}] para {$endpoint->url}");
-                $this->markFailedOrDead($status, $endpoint, $idempotencyKey, "Falha HTTP {$response->status()}");
-                return;
+                $this->error("   ❌ Falha HTTP [{$response->status()}] para endpoint ID {$endpoint->id}");
+                return false;
             }
 
             // D. TRATAMENTO DO RETORNO E SALVAMENTO
-            $this->saveResponse($endpoint, $clientCode, $response, $format, $status);
+            return $this->saveResponse($endpoint, $clientCode, $response, $format);
 
         } catch (\Exception $e) {
-            $this->error("   ❌ Erro crítico na requisição: " . $e->getMessage());
-            $this->markFailedOrDead($status, $endpoint, $idempotencyKey, 'Exceção na requisição.');
+            $this->error("   ❌ Erro crítico na requisição: " . $e::class
+                . ($e instanceof \Illuminate\Http\Client\RequestException ? ' HTTP ' . $e->response->status() : ''));
+            return false;
+        }
+    }
+
+    private function fetchPaginatedPages(
+        CadEndpoint $endpoint,
+        string $clientCode,
+        $request,
+        string $method,
+        array $payload,
+        string $format
+    ): bool {
+        $pagination = $endpoint->pagination;
+        $location = $pagination['location'] ?? 'query';
+        if ($location === null || (is_string($location) && trim($location) === '')) {
+            $location = 'query';
+        } elseif (is_string($location)) {
+            $location = strtolower(trim($location));
+        }
+        $pageParam = $pagination['page_param'] ?? 'page';
+        $pageStart = $this->paginationInteger($pagination['page_start'] ?? 1);
+        $pageSizeParam = $pagination['page_size_param'] ?? 'size';
+        $pageSize = $this->paginationInteger($pagination['page_size'] ?? 100);
+        $currentPagePath = $pagination['current_page_path'] ?? null;
+        $totalPagesPath = $pagination['total_pages_path'] ?? null;
+        $maxPages = $this->paginationInteger($pagination['max_pages'] ?? 100);
+
+        if (
+            !is_string($pageParam) || $pageParam === ''
+            || !in_array($location, ['query', 'body'], true)
+            || !is_string($pageSizeParam) || $pageSizeParam === ''
+            || $pageStart === null || $pageStart < 0
+            || $pageSize === null || $pageSize < 1
+            || $maxPages === null || $maxPages < 1
+            || !is_string($currentPagePath) || $currentPagePath === ''
+            || !is_string($totalPagesPath) || $totalPagesPath === ''
+        ) {
+            $this->error('   ❌ Configuração de paginação inválida ou incompleta.');
+            return false;
+        }
+
+        $requestedPage = $pageStart;
+        $pagesFetched = 0;
+        $executionBase = now()->format('YmdHisv');
+
+        while (true) {
+            if ($pagesFetched >= $maxPages) {
+                $this->error("   ❌ Limite de paginação atingido ({$maxPages} páginas).");
+                return false;
+            }
+
+            try {
+                if ($location === 'body') {
+                    $params = $payload;
+                    data_set($params, $pageParam, $requestedPage);
+                    data_set($params, $pageSizeParam, $pageSize);
+
+                    $pageRequest = clone $request;
+                    $pageRequest->withBody(
+                        json_encode($params, JSON_THROW_ON_ERROR),
+                        'application/json'
+                    );
+                    $response = $pageRequest->{$method}($endpoint->url);
+                } else {
+                    $params = $payload;
+                    $params[$pageParam] = $requestedPage;
+                    $params[$pageSizeParam] = $pageSize;
+
+                    if (in_array($method, ['post', 'put', 'patch'], true)) {
+                        $pageRequest = clone $request;
+                        $pageRequest->withQueryParameters([
+                            $pageParam => $requestedPage,
+                            $pageSizeParam => $pageSize,
+                        ]);
+                        $response = $pageRequest->{$method}($endpoint->url, $payload);
+                    } else {
+                        $response = $request->{$method}($endpoint->url, $params);
+                    }
+                }
+            } catch (\Exception $e) {
+                $this->error("   ❌ Erro crítico na página {$requestedPage}: " . $e::class
+                . ($e instanceof \Illuminate\Http\Client\RequestException ? ' HTTP ' . $e->response->status() : ''));
+                return false;
+            }
+
+            if (!$response->successful()) {
+                $this->error("   ❌ Falha HTTP [{$response->status()}] na página {$requestedPage} para endpoint ID {$endpoint->id}");
+                return false;
+            }
+
+            $filename = sprintf('%s-page-%06d.%s', $executionBase, $requestedPage, $format);
+            if (!$this->saveResponse($endpoint, $clientCode, $response, $format, $filename)) {
+                return false;
+            }
+
+            $decoded = json_decode($response->body(), true);
+            if (json_last_error() !== JSON_ERROR_NONE || !is_array($decoded)) {
+                $this->error("   ❌ Resposta da página {$requestedPage} não contém JSON válido para paginação.");
+                return false;
+            }
+
+            $current = $this->paginationInteger(data_get($decoded, $currentPagePath));
+            $total = $this->paginationInteger(data_get($decoded, $totalPagesPath));
+
+            if ($current === null || $total === null) {
+                $this->error("   ❌ Metadata de paginação ausente ou não numérica na página {$requestedPage}.");
+                return false;
+            }
+
+            if ($current < $pageStart || $total < $current || $current !== $requestedPage) {
+                $this->error("   ❌ Metadata de paginação incoerente na página {$requestedPage}.");
+                return false;
+            }
+
+            $pagesFetched++;
+
+            if ($current >= $total) {
+                return true;
+            }
+
+            if ($pagesFetched >= $maxPages) {
+                $this->error("   ❌ Limite de paginação atingido ({$maxPages} páginas).");
+                return false;
+            }
+
+            $requestedPage++;
+        }
+    }
+
+    private function paginationInteger($value): ?int
+    {
+        if (is_int($value)) {
+            return $value;
+        }
+
+        if (is_string($value) && preg_match('/^-?\d+$/', $value)) {
+            return (int) $value;
+        }
+
+        return null;
+    }
+
+    private function updateNextRun(CadEndpoint $endpoint, bool $success): void
+    {
+        try {
+            $endpoint->next_run = $success
+                ? ($endpoint->timer == 0 ? null : $endpoint->roundedTimestamp())
+                : now()->addMinutes(5);
+            $endpoint->save();
+
+            if ($endpoint->next_run) {
+                $this->line("   📅 Próxima execução: {$endpoint->next_run->format('H:i:s')}");
+            }
+        } catch (\Exception $e) {
+            $this->error("   ❌ Erro ao agendar: " . $e::class
+                . ($e instanceof \Illuminate\Http\Client\RequestException ? ' HTTP ' . $e->response->status() : ''));
         }
     }
 
     /**
      * Aplica a autenticação baseada no tipo configurado.
      */
-    private function applyAuthentication($endpoint, $client, &$headers)
+    private function applyAuthentication($endpoint, $client, &$headers): bool
     {
         $tipoAuth = strtolower($endpoint->autenticacao);
 
-        if ($tipoAuth === 'nenhum') return;
+        if ($tipoAuth === 'nenhum') return true;
+
+        if ($tipoAuth === 'basic' && $endpoint->auth_user && $endpoint->auth_pass) {
+            return true;
+        }
 
         // 1. Caso Especial: OAuth2 - Busca no Model Client
         if ($tipoAuth === 'oauth2') {
@@ -208,7 +405,7 @@ class FetchEndpoints extends Command
 
             if ($token) {
                 $headers['Authorization'] = 'Bearer ' . $token;
-                return;
+                return true;
             }
         }
 
@@ -224,8 +421,13 @@ class FetchEndpoints extends Command
                 case 'bearer': $headers['Authorization'] = 'Bearer ' . $token; break;
                 case 'basic':  $headers['Authorization'] = 'Basic ' . $token; break;
                 case 'api_key': $headers['Authorization'] = 'Api Key ' . $token; break;
+                default: return false;
             }
+
+            return true;
         }
+
+        return false;
     }
 
     private function getTokenFromFile($clientCode, $endpoint)
@@ -233,20 +435,13 @@ class FetchEndpoints extends Command
         $endpointSlug = Str::slug($endpoint->nome);
         $path = "token/{$clientCode}/{$endpointSlug}/auth.txt";
 
-        if (Storage::disk('local')->exists($path)) {
-            try {
-                $content = Crypt::decryptString(Storage::disk('local')->get($path));
-            } catch (DecryptException $e) {
-                $this->error("   ❌ Token inválido ou não descriptografável em storage/app/{$path}");
-                return null;
+        try {
+            $content = app(\App\Services\LegacyIntegrationStorage::class)->token($path);
+            if ($content !== null) {
+                return $this->extractToken($content, $endpoint->auth_token, $path);
             }
-
-            return $this->extractToken($content, $endpoint->auth_token, $path);
-        }
-
-        if (Storage::disk('public')->exists($path)) {
-            $this->warn(" Token legado lido de storage/app/public/{$path}; migre para storage privado.");
-            return $this->extractToken(Storage::disk('public')->get($path), $endpoint->auth_token, $path);
+        } catch (\Illuminate\Contracts\Encryption\DecryptException) {
+            $this->error('   ❌ Token legado não descriptografável.');
         }
 
         return null;
@@ -260,7 +455,7 @@ class FetchEndpoints extends Command
             return $this->validateTokenValue(data_get($decoded, $configuredKey ?: 'access_token'), $path);
         }
 
-        if (in_array('xml', $this->auth_extensions, true) && str_starts_with(ltrim($content), '<')) {
+        if (str_starts_with(ltrim($content), '<')) {
             $xml = simplexml_load_string($content);
             if ($xml !== false) {
                 $decoded = json_decode(json_encode($xml), true);
@@ -274,14 +469,14 @@ class FetchEndpoints extends Command
     private function validateTokenValue($token, string $path): ?string
     {
         if ($token === null || is_array($token) || is_object($token)) {
-            $this->error("   ❌ Token ausente ou não escalar em storage/app/{$path}");
+            $this->error("   ❌ Token ausente ou não escalar em storage/app/private/integrations/{$path}");
             return null;
         }
 
         return trim((string) $token);
     }
 
-    private function saveResponse($endpoint, $clientCode, $response, $format, ?CadInterfaceStatus $status = null)
+    private function saveResponse($endpoint, $clientCode, $response, $format, ?string $filename = null): bool
     {
         $endpointSlug = Str::slug($endpoint->nome);
         $endpointExt = Str::slug($endpoint->extensao ?: 'json');
@@ -295,42 +490,47 @@ class FetchEndpoints extends Command
         };
 
 	if($direcao=='auth'){
-        // Define nome do arquivo
-        $filename = 'auth.txt';
+            // Define nome do arquivo
+            $filename = 'auth.txt';
 	    $directory = "token/{$clientCode}/{$endpointSlug}";
 	} else {
             // Define nome do arquivo
-            $filename = now()->format('YmdHisv') . '.' .  $format;
+            $filename ??= now()->format('YmdHisv') . '.' .  $format;
             $directory = "polling/{$clientCode}/{$endpointExt}/{$direcao}/{$endpointSlug}/raw";
 	}
-        Storage::disk('local')->makeDirectory($directory);
+        Storage::disk('integrations')->makeDirectory($directory);
 
         $path = "{$directory}/{$filename}";
-        $responseBody = $response->body();
-        Storage::disk('local')->put($path, Crypt::encryptString($responseBody));
+        $response_body = $response->body();
+        $saved = Storage::disk('integrations')->put($path, $response_body);
 
-        $this->info("Salvo: storage/app/{$path}");
+        if (!$saved) {
+            $this->error("   ❌ Falha ao salvar: storage/app/private/integrations/{$path}");
+            return false;
+        }
+
+        $this->info("Salvo: storage/app/private/integrations/{$path}");
 
         // Registro de Status
-        $data = [
+        $savedStatus = CadInterfaceStatus::create([
             'int_direcao'    => ($direcao === 'auth' ? 'auth' : 'entrada'),
             'int_interface'  => $endpoint->nome,
             'int_arquivo'    => $filename,
-            'int_status'     => self::STATUS_SUCCESS,
-            'int_data_processamento' => now(),
+            'int_idoc'       => pathinfo($filename, PATHINFO_FILENAME),
+            'int_status'     => 0,
             'int_data_envio' => now(),
-            'int_mensagem' => 'Resposta salva em storage privado.',
-        ];
+        ]);
 
-        if ($status) {
-            $status->update($data);
-            return;
+        $this->savedStatusIds[] = $savedStatus->getKey();
+
+        // Opt-in only; preserve the raw response even when a capture fails.
+        if (!app(ResourceCapture::class)->discover($endpoint, $response_body, $path)) {
+            $this->error('   ❌ Captura de recurso pendente para endpoint ID ' . $endpoint->id);
+            return false;
         }
 
-        $data['int_idoc'] = pathinfo($filename, PATHINFO_FILENAME);
-        CadInterfaceStatus::create($data);
+        return true;
     }
-
     private function isAllowedMethod(string $method): bool
     {
         return in_array($method, ['get', 'post', 'put', 'patch'], true);
@@ -371,38 +571,4 @@ class FetchEndpoints extends Command
         return substr(hash('sha256', "{$client->id}:{$endpoint->id}:{$period}:{$payloadHash}"), 0, 30);
     }
 
-    private function hasSuccessfulRun(string $idempotencyKey): bool
-    {
-        return CadInterfaceStatus::where('int_idoc', $idempotencyKey)
-            ->where('int_status', self::STATUS_SUCCESS)
-            ->exists();
-    }
-
-    private function recordStatus(CadEndpoint $endpoint, ?string $idempotencyKey, int $status, string $message): CadInterfaceStatus
-    {
-        return CadInterfaceStatus::create([
-            'int_direcao' => strtolower($endpoint->direcao) === 'auth' ? 'auth' : 'entrada',
-            'int_interface' => $endpoint->nome,
-            'int_arquivo' => null,
-            'int_idoc' => $idempotencyKey ?: "endpoint-{$endpoint->id}-" . now()->format('YmdHisv'),
-            'int_status' => $status,
-            'int_mensagem' => Str::limit($message, 255),
-            'int_data_processamento' => now(),
-            'int_data_envio' => now(),
-        ]);
-    }
-
-    private function markFailedOrDead(CadInterfaceStatus $status, CadEndpoint $endpoint, string $idempotencyKey, string $message): void
-    {
-        $failures = CadInterfaceStatus::where('int_interface', $endpoint->nome)
-            ->where('int_idoc', $idempotencyKey)
-            ->whereIn('int_status', [self::STATUS_FAILED, self::STATUS_DEAD])
-            ->count();
-
-        $status->update([
-            'int_status' => $failures + 1 >= (int) ($endpoint->tentativas ?? 3) ? self::STATUS_DEAD : self::STATUS_FAILED,
-            'int_mensagem' => Str::limit($message, 255),
-            'int_data_processamento' => now(),
-        ]);
-    }
 }

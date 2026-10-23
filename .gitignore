@@ -22,3 +22,21 @@
 Homestead.json
 Homestead.yaml
 Thumbs.db
+
+# Editor backups and local environment variants
+*.save
+*.bak
+*.old
+*.tmp
+.env.*
+!.env.example
+!.env.testing.example
+# Preserve intentionally versioned test fixtures.
+!tests/fixtures/**/*.save
+!tests/fixtures/**/*.bak
+!tests/fixtures/**/*.old
+!tests/fixtures/**/*.tmp
+!tests/Fixtures/**/*.save
+!tests/Fixtures/**/*.bak
+!tests/Fixtures/**/*.old
+!tests/Fixtures/**/*.tmp

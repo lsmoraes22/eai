@@ -31,21 +31,23 @@ class CadEndpointResource extends Resource
                 Section::make('Informações da Interface')
                     ->description('Dados principais do endpoint.')
                     ->schema([
-                        Select::make('nome')
-                            ->label('Nome')
-                            ->required()
-                            ->options(CadProcesso::pluck('name', 'name'))
-                            ->searchable()
-                            ->preload(),
-                        Select::make('direcao')
-                            ->label('Direção')
-                            ->searchable()
-                            ->required()
-                            ->options([
-                            'entrada' => 'entrada',
-                            'auth' => 'auth',
-                            'saida' => 'saida'
-                            ]),
+
+                Select::make('nome')
+                    ->label('Nome')
+                    ->required()
+                    ->options(CadProcesso::pluck('name', 'name'))
+                    ->searchable()
+                    ->preload(),
+			Select::make('direcao')
+			    ->label('Direção')
+			    ->searchable()
+			    ->required()
+			    ->live()
+			    ->options([
+				'entrada' => 'entrada',
+				'auth' => 'auth',
+				'saida' => 'saida'
+			    ]),
                         Select::make('tipo')
                             ->label('Tipo de Integração')
                             ->options([
@@ -62,15 +64,15 @@ class CadEndpointResource extends Resource
                                 'GET' => 'GET',
                                 'POST' => 'POST',
                                 'PUT' => 'PUT',
-                				'PATCH' => 'PATCH'
+				'PATCH' => 'PATCH'
                             ])
                             ->default('POST')
                             ->required(),
-			            Select::make('client_id')
-                            ->label('Cliente')
-                            ->options(Client::all()->pluck('name', 'id')) // lista todos os clientes
-                            ->searchable() // permite pesquisar
-                            ->required(),
+			Select::make('client_id')
+	                    ->label('Cliente')
+	                    ->options(Client::all()->pluck('name', 'id')) // lista todos os clientes
+	                    ->searchable() // permite pesquisar
+	                    ->required(),
                         Textarea::make('url')
                             ->label('URL')
                             ->rows(2)
@@ -81,13 +83,14 @@ class CadEndpointResource extends Resource
                                 'XML' => 'XML',
                                 'JSON' => 'JSON',
                                 'TXT' => 'TXT',
-				                'CSV' => 'CSV'
+				'CSV' => 'CSV'
                             ])
                             ->default('XML')
                             ->required(),
-			            Toggle::make('namespace'),
+			Toggle::make('namespace'),
                     ])
                     ->columns(2),
+
                 Section::make('Headers da Requisição')
                     ->description('Headers HTTP adicionais (JSON).')
                     ->schema([
@@ -110,19 +113,25 @@ class CadEndpointResource extends Resource
                                 'basic'   => 'Basic Auth',
                                 'bearer'  => 'Bearer Token',
                                 'api_key' => 'API Key',
-                				'oauth2'  => 'OAuth2',
+				'oauth2'  => 'OAuth2',
                             ])
                             ->default('nenhum')
-			                ->live(),
-                        Select::make('type_storage_token')
-                            ->label('Local de armazenagem do token')
-                            ->options([
-                                'file' => 'Arquivo (Storage)',
-                                'client_token' => 'Token do Cliente (OAuth)',
-                                'fixed' => 'Fixo (Campo Auth Token)',
-                            ])
-                            ->default('fixed')
-                            ->required(),
+			    ->live(),
+			Select::make('type_storage_token')
+			    ->label('Local de armazenagem do token')
+			    ->options([
+			        'file' => 'Arquivo (Storage)',
+			        'client_token' => 'Token do Cliente (OAuth)',
+			        'fixed' => 'Fixo (Campo Auth Token)',
+			    ])
+			    ->default('fixed')
+			    ->required(),
+                        TextInput::make('auth_api_way')
+                            ->label('Local de envio do token')
+                            ->default('header')
+                            ->required()
+                            ->maxLength(20)
+                            ->helperText('Use header ou o nome do campo JSON que recebe o token no body.'),
                         TextInput::make('auth_user')
                             ->label('Usuário (Basic)')
                             ->visible(fn ($get) => $get('autenticacao') === 'basic')
@@ -140,11 +149,6 @@ class CadEndpointResource extends Resource
                             ->visible(fn ($get) =>
                                 in_array($get('autenticacao'), ['bearer', 'api_key'])
                             ),
-                        TextInput::make('auth_api_way')
-                            ->label('Forma de Autenticação da API')
-                            ->default('header')
-                            ->required()
-                            ->helperText('Define onde vai o token de acesso: header (padrão) ou body. O ideal é enviar no header, mas alguns endpoints podem exigir que o token seja enviado no body da requisição.Caso seja, colocar o nome do campo do body onde o token deve ser inserido. Ex: "token" se o body for {"data": "value", "token": "the_token_here"})')
                     ])
                     ->columns(2),
 
@@ -199,6 +203,66 @@ class CadEndpointResource extends Resource
 				'1440' => 'a cada dia'
                             ])
                             ->default('0'),
+                    ])
+                    ->columns(2),
+
+                Section::make('Paginação')
+                    ->description('Configuração genérica para APIs paginadas por página.')
+                    ->visible(fn ($get) => $get('direcao') !== 'auth')
+                    ->schema([
+                        Select::make('pagination.type')
+                            ->label('Tipo de paginação')
+                            ->options([
+                                'none' => 'Nenhuma',
+                                'page' => 'Página',
+                            ])
+                            ->default('none')
+                            ->live(),
+                        Select::make('pagination.location')
+                            ->label('Local dos parâmetros')
+                            ->options([
+                                'query' => 'Query',
+                                'body' => 'Body',
+                            ])
+                            ->default('query')
+                            ->required(fn ($get) => $get('pagination.type') === 'page')
+                            ->visible(fn ($get) => $get('pagination.type') === 'page'),
+                        TextInput::make('pagination.page_param')
+                            ->label('Parâmetro da página')
+                            ->default('page')
+                            ->required(fn ($get) => $get('pagination.type') === 'page')
+                            ->visible(fn ($get) => $get('pagination.type') === 'page'),
+                        TextInput::make('pagination.page_start')
+                            ->label('Página inicial')
+                            ->numeric()
+                            ->default(1)
+                            ->required(fn ($get) => $get('pagination.type') === 'page')
+                            ->visible(fn ($get) => $get('pagination.type') === 'page'),
+                        TextInput::make('pagination.page_size_param')
+                            ->label('Parâmetro do tamanho')
+                            ->default('size')
+                            ->required(fn ($get) => $get('pagination.type') === 'page')
+                            ->visible(fn ($get) => $get('pagination.type') === 'page'),
+                        TextInput::make('pagination.page_size')
+                            ->label('Tamanho da página')
+                            ->numeric()
+                            ->default(100)
+                            ->required(fn ($get) => $get('pagination.type') === 'page')
+                            ->visible(fn ($get) => $get('pagination.type') === 'page'),
+                        TextInput::make('pagination.current_page_path')
+                            ->label('Caminho da página atual')
+                            ->required(fn ($get) => $get('pagination.type') === 'page')
+                            ->visible(fn ($get) => $get('pagination.type') === 'page'),
+                        TextInput::make('pagination.total_pages_path')
+                            ->label('Caminho do total de páginas')
+                            ->required(fn ($get) => $get('pagination.type') === 'page')
+                            ->visible(fn ($get) => $get('pagination.type') === 'page'),
+                        TextInput::make('pagination.max_pages')
+                            ->label('Máximo de páginas')
+                            ->numeric()
+                            ->default(100)
+                            ->required(fn ($get) => $get('pagination.type') === 'page')
+                            ->visible(fn ($get) => $get('pagination.type') === 'page'),
                     ])
                     ->columns(2),
             ]);

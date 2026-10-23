@@ -5,6 +5,7 @@ namespace App\Filament\Resources;
 use App\Filament\Resources\CadProcessoResource\Pages;
 use App\Filament\Resources\CadProcessoResource\RelationManagers;
 use App\Models\CadProcesso;
+use App\Models\CadEndpoint;
 use Filament\Forms;
 use Filament\Forms\Components\Section;
 use Filament\Forms\Components\TextInput;
@@ -35,6 +36,32 @@ class CadProcessoResource extends Resource
                     ->rules(['regex:/^[A-Za-z0-9_]+$/'])
                     ->helperText('Somente letras, números e underline.')
                     ->maxLength(100),
+		Select::make('input_endpoint_id')
+		    ->label('Endpoint de entrada')
+		    ->options(fn () => CadEndpoint::where('direcao', 'entrada')->pluck('nome', 'id'))
+		    ->searchable()
+		    ->preload()
+		    ->nullable(),
+		Select::make('output_endpoint_id')
+		    ->label('Endpoint de saída')
+		    ->options(fn () => CadEndpoint::where('direcao', 'saida')->pluck('nome', 'id'))
+		    ->searchable()
+		    ->preload()
+		    ->nullable(),
+		Select::make('output_mode')
+		    ->label('Modo de saída')
+		    ->options([
+		        'single' => 'Single',
+		        'per_item' => 'Por item',
+		    ])
+		    ->default('single')
+		    ->live()
+		    ->nullable(),
+		TextInput::make('input_collection_path')
+		    ->label('Caminho da coleção de entrada')
+		    ->visible(fn ($get) => $get('output_mode') === 'per_item')
+		    ->required(fn ($get) => $get('output_mode') === 'per_item')
+		    ->helperText('O caminho localiza a coleção no documento de entrada. Os campos de origem do de-para serão avaliados relativamente a cada item da coleção.'),
 	 	Select::make('initial_format')
                     ->label('Formato Inicial')
                     ->options([

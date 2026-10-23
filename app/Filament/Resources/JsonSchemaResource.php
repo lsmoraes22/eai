@@ -6,6 +6,7 @@ use App\Filament\Resources\JsonSchemaResource\Pages;
 use App\Filament\Resources\JsonSchemaResource\RelationManagers;
 //use BezhanSalleh\FilamentShield\Contracts\HasShieldPermissions;
 use App\Models\JsonSchema;
+use App\Models\Client;
 use Filament\Forms;
 use Filament\Forms\Form;
 use Filament\Resources\Resource;
@@ -45,6 +46,8 @@ class JsonSchemaResource extends Resource //implements HasShieldPermissions
                             ->columnSpanFull(),
 
                         Forms\Components\FileUpload::make('temp_file')
+                            ->disk('integrations')
+                            ->visibility('private')
                             ->label('Arquivo JSON Schema')
                             ->directory('temp/json_schema')
                             ->preserveFilenames()
@@ -52,7 +55,7 @@ class JsonSchemaResource extends Resource //implements HasShieldPermissions
                             ->acceptedFileTypes(['application/json', 'text/plain'])
                             ->required()
                             // Dica: Adicione o helper para lembrar o usuário do formato
-                            ->helperText('O arquivo deve seguir a especificação JSON Schema (draft-07 ou superior).'),
+                            ->helperText('O arquivo deve seguir a especificação JSON Schema Draft 6.'),
                     ])->columns(2),
             ]);
     }

@@ -156,14 +156,7 @@ class ClientResource extends Resource
 		->label('Vincular Conta API')
 		->icon('heroicon-o-key')
 		->color('info')
-		->url(function (Client $record) {
-		    // Se não houver URL de autorização ou Client ID, o botão não funciona corretamente
-		    if (!$record->auth_url || !$record->app_client_id) {
-			return null;
-		    }
-
-                    return $record->buildOAuthAuthorizationUrl();
-                })
+		->url(fn (Client $record) => route('oauth.authorize', ['client' => $record]))
                 ->openUrlInNewTab()
                 // O botão só aparece se os dados mínimos de configuração existirem
                 ->visible(fn (Client $record) => $record->auth_url && $record->app_client_id),

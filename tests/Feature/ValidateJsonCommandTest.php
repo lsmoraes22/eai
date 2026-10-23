@@ -6,8 +6,9 @@ use App\Models\Client;
 use Illuminate\Support\Facades\Crypt;
 use Illuminate\Support\Facades\Storage;
 
-test('validate json reads encrypted local raw files and continues public pipeline', function () {
+test('validate json reads encrypted local raw files and continues private schema validated pipeline', function () {
     Storage::fake('local');
+    Storage::fake('integrations');
     Storage::fake('public');
 
     $client = Client::create([
@@ -53,11 +54,15 @@ test('validate json reads encrypted local raw files and continues public pipelin
         'int_data_envio' => now(),
     ]);
 
+    Storage::disk('integrations')->put('polling/cliente-json/schema/orders.json', '{"type":"object","required":["order"]}');
+
     $this->artisan('app:validate-json')
         ->assertExitCode(0);
 
-    expect(Storage::disk('local')->exists('polling/cliente-json/json/incoming/orders/raw/incoming.json'))->toBeFalse()
-        ->and(Storage::disk('public')->get('polling/cliente-json/json/incoming/orders/validated/incoming.json'))->toBe('{"order":123}');
+    expect(Storage::disk('local')->exists('polling/cliente-json/json/incoming/orders/raw/incoming.json'))->toBeTrue()
+        ->and(Storage::disk('integrations')->get('polling/cliente-json/json/incoming/orders/validated/incoming.json'))->toBe('{"order":123}');
+
+    expect(Storage::disk('public')->allFiles())->toBeEmpty();
 
     $this->assertDatabaseHas('cad_interface_status', [
         'int_arquivo' => 'incoming.json',

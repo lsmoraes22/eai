@@ -22,11 +22,11 @@ class FileExplorer extends Page
         return [
             'directories' => array_map(function ($dir) {
 		return basename($dir);
-            }, Storage::disk('public')->directories($path)),
+            }, Storage::disk('integrations')->directories($path)),
 
             'files' => array_map(function ($file) {
                 return basename($file);
-            }, Storage::disk('public')->files($path)),
+            }, Storage::disk('integrations')->files($path)),
         ];
     }
 
@@ -47,8 +47,8 @@ class FileExplorer extends Page
     public function deleteFile($file)
     {
     	$path = "public/{$this->currentPath}/{$file}";
-    	if (Storage::disk('public')->exists("{$this->currentPath}/{$file}")) {
-            Storage::disk('public')->delete("{$this->currentPath}/{$file}");
+        if (Storage::disk('integrations')->exists("{$this->currentPath}/{$file}")) {
+            Storage::disk('integrations')->delete("{$this->currentPath}/{$file}");
             $this->dispatch('notify', message: 'Arquivo deletado com sucesso!');
 	    CadInterfaceStatus::where('int_arquivo',$file)->update(['int_status' => 4]);
         }
@@ -58,7 +58,7 @@ class FileExplorer extends Page
     {
     	$path = "{$this->currentPath}/{$file}";
 
-    	if (!Storage::disk('public')->exists($path)) {
+        if (!Storage::disk('integrations')->exists($path)) {
     	    $this->previewContent = 'Arquivo não encontrado!';
     	    return;
    	}
@@ -68,14 +68,15 @@ class FileExplorer extends Page
     	if (in_array($ext, ['png','jpg','jpeg','gif','webp'])) {
    	     // Preview de imagem
    	     $this->previewType = 'image';
-   	     $this->previewContent = Storage::disk('public')->url($path);
+         $this->previewContent = 'data:image/' . ($ext === 'jpg' ? 'jpeg' : $ext) . ';base64,'
+                 . base64_encode(Storage::disk('integrations')->get($path));
    	     return;
    	}
 
     	// Preview de texto
     	if (in_array($ext, ['txt','json','xml','log','csv','xsd'])) {
     	    $this->previewType = 'text';
-    	    $this->previewContent = Storage::disk('public')->get($path);
+            $this->previewContent = Storage::disk('integrations')->get($path);
     	    return;
     	}
 

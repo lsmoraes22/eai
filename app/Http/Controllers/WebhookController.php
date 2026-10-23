@@ -83,8 +83,8 @@ class WebhookController extends Controller
         $directory = "webhooks/{$clientCode}/{$extension}/incoming/{$interfaceSlug}/raw";
 
         try {
-            Storage::disk('public')->makeDirectory($directory);
-            Storage::disk('public')->put("{$directory}/{$filename}", $content);
+            Storage::disk('integrations')->makeDirectory($directory);
+            Storage::disk('integrations')->put("{$directory}/{$filename}", $content);
 
             // 5. Registro para o Processador
             CadInterfaceStatus::create([
@@ -102,7 +102,7 @@ class WebhookController extends Controller
             ], 200);
 
         } catch (\Exception $e) {
-            Log::critical("Erro ao salvar Webhook: " . $e->getMessage());
+            Log::critical("Erro ao salvar Webhook: " . $e::class);
             return response()->json(['message' => 'Erro interno ao processar'], 500);
         }
     }

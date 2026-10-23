@@ -59,6 +59,7 @@ function prepareSendPayload(): void
 
 test('send endpoints uses private storage for outgoing payloads and file tokens', function () {
     Storage::fake('local');
+    Storage::fake('integrations');
     Storage::fake('public');
 
     $client = createSendClient();
@@ -84,11 +85,12 @@ test('send endpoints uses private storage for outgoing payloads and file tokens'
     Http::assertSent(fn ($request) => $request->hasHeader('Authorization', 'Bearer private-token'));
 
     expect(Storage::disk('public')->allFiles())->toBeEmpty()
-        ->and(Storage::disk('local')->exists('polling/cliente-send/json/outgoing/orders/processed/payload.json'))->toBeTrue();
+        ->and(Storage::disk('integrations')->exists('polling/cliente-send/json/outgoing/orders/processed/payload.json'))->toBeTrue();
 });
 
 test('send endpoints reads json tokens using the default or configured key', function (?string $configuredKey, array $storedToken, string $expectedToken) {
     Storage::fake('local');
+    Storage::fake('integrations');
     Storage::fake('public');
 
     $client = createSendClient();
@@ -110,6 +112,7 @@ test('send endpoints reads json tokens using the default or configured key', fun
 
 test('send endpoints remains compatible with fixed tokens', function () {
     Storage::fake('local');
+    Storage::fake('integrations');
     Storage::fake('public');
 
     $client = createSendClient();
@@ -127,6 +130,7 @@ test('send endpoints remains compatible with fixed tokens', function () {
 
 test('send endpoints rejects a non scalar token value', function () {
     Storage::fake('local');
+    Storage::fake('integrations');
     Storage::fake('public');
 
     $client = createSendClient();
@@ -147,6 +151,7 @@ test('send endpoints rejects a non scalar token value', function () {
 
 test('send endpoints sanitizes sensitive external response data', function () {
     Storage::fake('local');
+    Storage::fake('integrations');
 
     $client = createSendClient();
     $endpoint = createSendEndpoint($client, [
@@ -194,6 +199,7 @@ test('send endpoints sanitizes sensitive external response data', function () {
 
 test('send endpoints remains compatible with public outgoing payloads', function () {
     Storage::fake('local');
+    Storage::fake('integrations');
     Storage::fake('public');
 
     $client = createSendClient();
@@ -218,5 +224,32 @@ test('send endpoints remains compatible with public outgoing payloads', function
     $this->artisan('app:send-endpoints', ['--id' => $endpoint->id])
         ->assertExitCode(0);
 
-    expect(Storage::disk('public')->exists('polling/cliente-send/json/outgoing/orders/processed/payload.json'))->toBeTrue();
+    expect(Storage::disk('integrations')->exists('polling/cliente-send/json/outgoing/orders/processed/payload.json'))->toBeTrue();
+});
+
+test('send endpoints supports a configured body token without an authorization header', function () {
+    Storage::fake('integrations');
+    $client = createSendClient();
+    $endpoint = createSendEndpoint($client, [
+        'type_storage_token' => 'fixed', 'auth_token' => 'body-token', 'auth_api_way' => 'api_token',
+    ]);
+    $path = 'polling/cliente-send/json/outgoing/orders/raw/body.json';
+    Storage::disk('integrations')->put($path, '{"order":123}');
+    Http::fake(['*' => Http::response(['ok' => true])]);
+    $this->artisan('app:send-endpoints', ['--id' => $endpoint->id])->assertExitCode(0);
+    Http::assertSent(fn ($request) => json_decode($request->body(), true) === ['order' => 123, 'api_token' => 'body-token']
+        && !$request->hasHeader('Authorization'));
+    expect(Storage::disk('integrations')->get(str_replace('/raw/', '/processed/', $path)))->toBe('{"order":123}');
+});
+
+test('a migrated legacy outgoing file is not sent again on the next execution', function () {
+    Storage::fake('local');
+    Storage::fake('integrations');
+    Storage::fake('public');
+    $endpoint = createSendEndpoint(createSendClient(), ['autenticacao' => 'nenhum', 'type_storage_token' => 'fixed']);
+    prepareSendPayload();
+    Http::fake(['*' => Http::response(['ok' => true])]);
+    $this->artisan('app:send-endpoints', ['--id' => $endpoint->id])->assertExitCode(0);
+    $this->artisan('app:send-endpoints', ['--id' => $endpoint->id])->assertExitCode(0);
+    Http::assertSentCount(1);
 });
